@@ -8,9 +8,7 @@ def create_submission():
         ('double_pendulum.py', 'double_pendulum.py'),
     ]
 
-    # Prompt for Andrew ID and name the zip file accordingly
-    andrew_id = input("Enter your andrew ID: ").strip()
-    zip_filename = f"{andrew_id}_hw5.zip"
+    zip_filename = "submission.zip"
 
     # Create a zip file
     with zipfile.ZipFile(zip_filename, 'w') as zipf:
@@ -22,7 +20,7 @@ def create_submission():
                 print(f"Warning: {file} not found and not included in the submission.")
 
     print(f"\nSubmission zip created: {zip_filename}")
-    print("Please upload this file to Gradescope.")
+    print("Rename it to <andrew_id>.zip and upload it to Gradescope.")
 
 
 if __name__ == "__main__":

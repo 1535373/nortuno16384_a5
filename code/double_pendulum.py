@@ -22,9 +22,8 @@ L1 = 1.0    # length of link 1 [m]
 L2 = 1.0    # length of link 2 [m]
 G = 9.81    # gravitational acceleration [m/s^2]
 
-# Integrator tolerances.  Pass these to solve_ivp as rtol= and atol=.  The
-# double pendulum is chaotic, so a loose tolerance makes your trajectory drift
-# away from the reference within a few seconds.
+# Integrator tolerances.  If you use solve_ivp, pass these as rtol= and atol=.
+# Loose tolerances let small errors pile up, and the energy drifts.
 RTOL = 1e-9
 ATOL = 1e-9
 
@@ -83,7 +82,7 @@ def dynamics(q, qd):
 
 
 def simulate(q0, qd0, T=10.0, dt=0.01):
-    """Simulate the double pendulum from an initial state with solve_ivp.
+    """Simulate the double pendulum from an initial state.
 
     Args:
         q0:     initial joint angles, shape (2,).
@@ -98,14 +97,15 @@ def simulate(q0, qd0, T=10.0, dt=0.01):
             q:  joint angles at those times, shape (N, 2).
             qd: joint velocities at those times, shape (N, 2).
 
-    Steps:
+    We recommend scipy's solve_ivp, but you may write your own integrator.
+    With solve_ivp:
         1. solve_ivp integrates a first-order system  x_dot = f(t, x).  Stack
            the state as x = [theta_1, theta_2, theta_1_dot, theta_2_dot] and
            write f(t, x) using your `dynamics` function.
         2. Call solve_ivp with t_eval set to the sample times, and pass
-           rtol=RTOL, atol=ATOL.  Leave the method at its default (RK45).
+           rtol=RTOL, atol=ATOL.  Use t_span = (0, t_eval[-1]).
         3. Unpack the solution (sol.t and sol.y, which has shape (4, N)) into
            t, q and qd.
     """
-    # TODO: simulate with solve_ivp.
+    # TODO: simulate the double pendulum.
     raise NotImplementedError("simulate")

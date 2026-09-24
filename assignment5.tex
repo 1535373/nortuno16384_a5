@@ -45,11 +45,13 @@
     \titledquestion{Double Pendulum}[30]
     The double pendulum is a classic example of a chaotic system, yet its equations of motion are relatively simple to derive. You will be using your derived equations of motion to simulate the double pendulum in the coding section of this assignment.
 
+    The masses $m_1$ and $m_2$ are point masses at the ends of massless rods of length $\ell_1$ and $\ell_2$. Both angles are measured from the downward vertical, as shown in the figure: $\theta_2$ is the absolute angle of link 2, \emph{not} its angle relative to link 1. Gravity points in the $-y$ direction.
+
     \begin{center}
         \includegraphics[width=0.4\textwidth]{generated_figures/double_pendulum.pdf}
     \end{center}
     
-    \begin{enumerate}
+    \begin{enumerate}[label=\alph*.]
         \item \text{[10 points]} Write the potential and kinetic energy of the system in terms of the generalized coordinates $q = [\theta_1, \theta_2]^\top$ and their time derivatives $\dot q = [\dot \theta_1, \dot \theta_2]^\top$.
         \begin{tcolorbox}[height=4cm]
         \end{tcolorbox}
@@ -65,14 +67,14 @@
     \end{enumerate}
 
     \pagebreak
-    \titledquestion{RRR Arm Dynamics}[30]
+    \titledquestion{RRR Arm Dynamics}[40]
 
-    Consider the following robot. Assume no joint limits, and that the links lengths are $l_1=l_2=l_3=1$, and the masses are $m_1=m_2=m_3=1$. The joint angles are measured as a relative angle from the previous link / horizontal, so $\th[1]=\th[2]=\th[3]=0$ means the arm is fully extended to the right.
+    Consider the following robot. Assume no joint limits, and that the links lengths are $l_1=l_2=l_3=1$, and the masses are $m_1=m_2=m_3=1$. The joint angles are measured as a relative angle from the previous link / horizontal, so $\th[1]=\th[2]=\th[3]=0$ means the arm is fully extended to the right. Each link's mass is spread uniformly along its length, so its center of mass is at its midpoint and its moment of inertia about its center of mass is $I_i = \frac{1}{12} m_i l_i^2 = \frac{1}{12}$. Gravity points in the $-y$ direction.
     \begin{center}
         \includegraphics[scale=0.07]{generated_figures/robot_1.png}
     \end{center}
 
-    \begin{enumerate}
+    \begin{enumerate}[label=\alph*.]
         \item \text{[10 points]} Write the potential and kinetic energy of the system in terms of the generalized coordinates $q = [\theta_1, \theta_2, \theta_3]^\top$ and their time derivatives $\dot q = [\dot \theta_1, \dot \theta_2, \dot \theta_3]^\top$.
         \begin{tcolorbox}[height=4cm]
         \end{tcolorbox}
@@ -101,6 +103,7 @@
 \section{Code Questions}
 
 \begin{questions}
+    \setcounter{question}{3}
     \titledquestion{Double Pendulum Simulation}[45]
     In this question you will simulate the double pendulum from the written section using the equations of motion you derived. All the code is in the \verb!code/! folder; \verb!code/README.md! explains how to run each script. You edit and submit only \verb!double_pendulum.py!.
 

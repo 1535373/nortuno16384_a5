@@ -7,7 +7,7 @@ seconds and plots its total energy over time.
     python energy_check.py
 
 It uses your `simulate` and `total_energy` from double_pendulum.py.  Provided
--- you do not need to edit this file.  Put the plot in your writeup (part c).
+-- you do not need to edit this file.
 """
 
 import sys
