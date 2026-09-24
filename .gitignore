@@ -1,0 +1,10 @@
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.aux
+
+__pycache__/
+*_hw5.zip
