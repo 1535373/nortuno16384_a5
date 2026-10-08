@@ -1,7 +1,7 @@
 """Draw the strokes you want the arm to trace, and save them.  Provided.
 
-    python sketch.py strokes/kdc.json          # draw a new file, or edit that one
-    python sketch.py strokes/kdc.json --show   # just look at it
+    python sketch.py strokes/rkd.json          # draw a new file, or edit that one
+    python sketch.py strokes/rkd.json --show   # just look at it
 
 A window shows the sheet as you see it standing in front of the robot: the
 robot is beyond the top edge, and corner 1 (the first one you touch when
@@ -198,12 +198,12 @@ class Sketch:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("file", help="strokes file to create or edit, e.g. strokes/kdc.json")
+    parser.add_argument("file", help="strokes file to create or edit, e.g. strokes/rkd.json")
     parser.add_argument("--show", action="store_true", help="view only, no editing")
     args = parser.parse_args()
     path = Path(args.file)
     if path.suffix != ".json":
-        raise SystemExit("give the strokes file a .json name, e.g. strokes/kdc.json")
+        raise SystemExit("give the strokes file a .json name, e.g. strokes/rkd.json")
     width, height, source = sheet_size()
     if args.show and not path.exists():
         raise SystemExit(f"no such file: {path}")

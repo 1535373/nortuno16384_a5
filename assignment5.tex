@@ -140,10 +140,11 @@
 
 \section{Hands-on Lab: Drawing with the xArm7}
 
-% STAFF TODO (not for students): measure the marker holder at each station and
-% set MARKER_LENGTH in lab/drawing_arm.py (flange face to marker tip, metres).
-% The holder must let the marker slide back at least PRESS (1 mm); a rigid
-% mount pushes the tip into the table. Tape a sheet of paper (or lay a small
+% STAFF TODO (not for students): set MARKER_LENGTH in lab/drawing_arm.py to the
+% flange-to-tip length of the station's marker holder. A centimetre or two off
+% is fine (calibration cancels it, see the planar-arm subsection), but it should
+% be roughly right. The holder must let the marker slide back at least PRESS
+% (1 mm); a rigid mount pushes the tip into the table. Tape a sheet of paper (or lay a small
 % whiteboard) on the table in front of each arm, roughly 30--55 cm out.
 
 In this section the xArm7 holds a marker and writes on a sheet of paper.  You
@@ -152,7 +153,7 @@ inverse kinematics, and the arm is driven exactly as you drove planar chains
 there.  What is new is where the paper is.  You will find it the way a
 technician would: touch the marker to its four corners, and turn those four
 points into a coordinate frame for the sheet.  Then you will draw the letters
-\textbf{KDC} on screen, run them in simulation, and finally watch the real arm
+\textbf{RKD} on screen, run them in simulation, and finally watch the real arm
 write them.
 
 \subsection{The xArm7 as a Planar Arm}
@@ -176,6 +177,11 @@ of the arm, so you don't have to.  Your IK takes 100 steps of size $0.1$, which
 was sized for the metre-long links of Assignment 4.  The xArm's links are about
 a third of that, so one call only gets part of the way, and \verb!drawing_arm.py!
 calls it again from its own answer until the marker lands within 1~mm.
+
+The marker always points straight down, and joint 7 turns against joint 1 so
+that the tool never rotates about the vertical either.  The tool only ever
+translates: in calibration and in drawing alike, it keeps one fixed
+orientation.  Part (c) asks you why that matters.
 
 \subsection{Setting Up}
 
@@ -219,7 +225,7 @@ the paper.}
 
 \begin{questions}
     \setcounter{question}{4}
-    \titledquestion{Drawing KDC on the xArm7}[50]
+    \titledquestion{Drawing RKD on the xArm7}[50]
 
     \begin{enumerate}[label=\alph*.]
         \item \text{[10 points]} \textbf{The paper's frame.}  Calibration gives
@@ -278,27 +284,39 @@ python check_plane.py
                   crooked on purpose.  It touches the four corners with your IK,
                   builds the frame with your \verb!plane.py!, and tells you how far
                   your frame is from the sheet's true one.  It should be within a
-                  couple of millimetres.
-            \item Draw the strokes for the letters \textbf{KDC}:
-                  \verb!python sketch.py strokes/kdc.json!.  Left-click to place
+                  couple of millimetres.  Then practise the real arm's procedure:
+                  \verb!python calibrate.py --manual! has you jog the marker onto
+                  each corner yourself, with the keys of part (d), while it tells
+                  you how far the tip is from the paper.
+            \item Draw the strokes for the letters \textbf{RKD}:
+                  \verb!python sketch.py strokes/rkd.json!.  Left-click to place
                   points, right-click to finish a stroke; the window lists the
                   other keys.  Each stroke is traced without lifting the marker,
                   so think about where to put the breaks.  Closing the window
                   saves the file.  The strokes are stored in metres on the sheet,
                   from corner 1, so the same file draws in simulation and on the
                   real arm.
-            \item Run it: \verb!python draw.py strokes/kdc.json!.  Your IK is
+            \item Run it: \verb!python draw.py strokes/rkd.json!.  Your IK is
                   solved along the whole path first, which takes a few seconds,
                   and any point it can't reach stops the run before anything
                   moves.  Then the simulated arm writes on its sheet, and ink
                   appears where the marker meets the paper.  The result is saved
-                  as \verb!results/kdc-sim.png!: your strokes, dashed, beside the
+                  as \verb!results/rkd-sim.png!: your strokes, dashed, beside the
                   path the marker really took.
         \end{enumerate}
-        Include \verb!results/kdc-sim.png! in your PDF.  The ink sits a millimetre
-        or two from your strokes.  Why, when the arm follows its plan to a
-        fraction of a millimetre?
-        \begin{tcolorbox}[height=3cm]
+        Include \verb!results/rkd-sim.png! in your PDF.
+
+        The simulator's marker is not the one \verb!MARKER_LENGTH! describes: its
+        tip is 18~mm further from the flange and 5~mm off the flange's axis, as a
+        real marker in a real holder might be.  Yet the ink lands within about a
+        millimetre of your strokes.  Explain why.  Hint: the code computes a tip
+        position $\vec{t} = \vec{f} + \mat{R}\,[0, 0, \ell]^\top$ from the flange
+        position $\vec{f}$ and orientation $\mat{R}$, and the real tip is
+        $\vec{f} + \mat{R}\,\vec{d}$ for some unknown $\vec{d}$.  What is the
+        difference between the two when $\mat{R}$ never changes?  What would go
+        wrong if you calibrated by pushing the marker onto the corners by hand,
+        holding it at whatever angle felt natural?
+        \begin{tcolorbox}[height=4cm]
         \end{tcolorbox}
 
         \item \text{[20 points]} \textbf{Draw it on the xArm7.}  Graded by hand,
@@ -306,17 +324,33 @@ python check_plane.py
         \begin{enumerate}[label=(\roman*)]
             \item \verb!git pull! your code onto the lab machine, and run
                   \verb!python check_plane.py! once more.
-            \item \verb!python calibrate.py!.  The arm moves to its ready pose,
-                  marker down, over the table.  Then, for each corner in turn, it
-                  goes limp: push the marker tip onto the corner it asks for, keep
-                  the marker upright, hold it there gently, and press enter.
-                  Joints 3 and 5 stay held, so the arm stays in the plane its IK
-                  works in.  If you push one of them out of place, the arm stops,
-                  asks you to let go, and puts it back.
-            \item \verb!python draw.py strokes/kdc.json --plan-only! plans the
+            \item \verb!python calibrate.py!.
+                  \begin{itemize}
+                      \item The arm moves to the home pose of the Assignment 3 lab:
+                            marker pointing down, a few centimetres over the table,
+                            with joints 1, 4 and 7 turning about vertical axes.  For
+                            each corner in turn, swing the arm by hand until the
+                            marker is over the corner (or as close as it will go),
+                            and press enter.  Only those three joints are free.  If
+                            you push one of the others out of place, or take the
+                            marker out of the area the arm can draw on, the arm
+                            locks where it is, asks you to let go, and moves back.
+                      \item The arm moves to its drawing pose, marker down, above
+                            corner 1.  (It raises its shoulder on the way: a
+                            straight move between the two poses would take the
+                            marker through the table.)
+                      \item For each corner, jog the marker until the tip just
+                            touches it: \verb!w!/\verb!s! move it away from you and
+                            towards you, \verb!a!/\verb!d! left and right,
+                            \verb!r!/\verb!f! up and down, and \verb!1!, \verb!2!,
+                            \verb!3! set the step to 0.5, 2 or 10~mm.  Come down the
+                            last few millimetres in 0.5~mm steps, and press enter
+                            when the tip touches.
+                  \end{itemize}
+            \item \verb!python draw.py strokes/rkd.json --plan-only! plans the
                   drawing on your real sheet without moving anything.  Look at
-                  \verb!results/kdc-plan.png!.
-            \item \verb!python draw.py strokes/kdc.json!, hand on the e-stop.
+                  \verb!results/rkd-plan.png!.
+            \item \verb!python draw.py strokes/rkd.json!, hand on the e-stop.
         \end{enumerate}
 
         \begin{tcolorbox}[colback=red!5, colframe=red!60!black,
@@ -344,10 +378,10 @@ python check_plane.py
         \end{tcolorbox}
 
         \textbf{Deliverable.}  One video, a phone is fine, showing the arm write
-        KDC from start to finish, with the paper visible.  Put it in
+        RKD from start to finish, with the paper visible.  Put it in
         \verb!lab/handin/!.  \verb!create_submission.py! also collects your
         \verb!lab/robot.py!, \verb!lab/plane.py!, your strokes, both calibrations
-        and everything in \verb!lab/results!.  Include \verb!results/kdc-robot.png!
+        and everything in \verb!lab/results!.  Include \verb!results/rkd-robot.png!
         in your PDF, and say in a sentence or two where the real drawing differs
         from your strokes, and why.
         \begin{tcolorbox}[height=3cm]
@@ -357,7 +391,7 @@ python check_plane.py
 
 \begin{submissionChecklist}
         \item Create a PDF of your answers to the written questions with the name \verb!<andrew_id>.pdf! and submit it to Gradescope.
-        \item Include \verb!lab/results/kdc-sim.png! and \verb!lab/results/kdc-robot.png! in that PDF.
+        \item Include \verb!lab/results/rkd-sim.png! and \verb!lab/results/rkd-robot.png! in that PDF.
         \item Run \verb!local_autograder.py! and \verb!lab/check_plane.py!, and confirm they report no failures.
         \item Put your drawing video in \verb!lab/handin!.
         \item Run \verb!create_submission.py! in the python terminal.

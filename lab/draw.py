@@ -1,7 +1,7 @@
 """Draw your strokes on the paper with the xArm7.  Provided.
 
-    python draw.py strokes/kdc.json              # simulator, or the real arm with ROBOT_IP set
-    python draw.py strokes/kdc.json --plan-only  # plan and plot it; nothing moves
+    python draw.py strokes/rkd.json              # simulator, or the real arm with ROBOT_IP set
+    python draw.py strokes/rkd.json --plan-only  # plan and plot it; nothing moves
 
 1. Your plane.py builds the paper frame from the latest calibration
    (calibration-robot.json or calibration-sim.json; run calibrate.py first).
@@ -123,10 +123,12 @@ def main():
         trace = np.asarray(plane.robot_to_paper(H, tips), dtype=float)
         inked = plan.pen_down
     else:
-        # On the simulated sheet's true frame, and inked only where the tip
-        # really reached it: a calibration that is off shows here.
+        # The simulator's real marker tip (not the computed one), on the
+        # simulated sheet's true frame, and inked only where it really reached
+        # the paper: a calibration that is off shows here.
         truth = da.sim_paper_frame()
-        trace = (tips - truth[:3, 3]) @ truth[:3, :3]
+        real_tips = np.array([da.sim_marker_tip(model, q) for q in measured])
+        trace = (real_tips - truth[:3, 3]) @ truth[:3, :3]
         inked = trace[:, 2] <= da.SimScene.INK_HEIGHT
 
     off = np.linalg.norm(tips - plan.tip, axis=1)

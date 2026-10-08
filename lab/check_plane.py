@@ -23,6 +23,7 @@ plane.py is ready for `python calibrate.py` on the real arm.
 """
 
 import importlib.util
+import json
 import math
 import sys
 import traceback
@@ -246,9 +247,12 @@ def against_the_sim(plane):
         print(f"\nyour calibration-sim.json: plane_frame fails on it ({err})")
         return
     truth = da.sim_paper_frame()
+    # The touches are of the computed tip, which sits this far from the
+    # simulator's real one; the frame is the sheet's, moved by it.
+    offset = np.array(json.loads(path.read_text()).get("sim_marker_offset", [0, 0, 0]))
     angle = math.degrees(math.acos(min(1.0, abs(float(H[:3, 2] @ truth[:3, 2])))))
     print(f"\nyour calibration-sim.json, through this plane.py: origin "
-          f"{np.linalg.norm(H[:3, 3] - truth[:3, 3]) * 1000:.1f} mm and normal "
+          f"{np.linalg.norm(H[:3, 3] + offset - truth[:3, 3]) * 1000:.1f} mm and normal "
           f"{angle:.2f} deg from the simulated sheet's (the touches themselves are "
           f"off by about {da.SIM_TOUCH_NOISE * 1000:.1f} mm)")
 

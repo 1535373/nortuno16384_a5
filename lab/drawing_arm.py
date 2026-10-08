@@ -18,6 +18,14 @@ is the same for the simulator and the real one), and `PenIK` calls your
 `Robot.inverse_kinematics` with it. The rest plans a drawing and plays it on
 the arm, real or simulated.
 
+One orientation, always. The marker points straight down, and joint 7 turns
+against joint 1 so the flange never turns about the vertical either: the tool
+moves without rotating, in calibration and in drawing alike. Then wherever the
+marker's real tip is relative to the flange -- longer than MARKER_LENGTH says,
+clamped off-centre, tilted in its holder -- it is a fixed offset from the tip
+this code computes. Calibration measures the paper in those computed-tip
+coordinates, the drawing is planned in the same ones, and the offset cancels.
+
 Lab staff: the constants in the first block are the ones to check at a station.
 """
 
@@ -36,7 +44,9 @@ HERE = Path(__file__).resolve().parent
 # Setup. Lab staff: measure these at the stations.
 # ----------------------------------------------------------------------
 
-# Flange face to marker tip, along the flange's z axis, in metres.
+# Flange face to marker tip, along the flange's z axis, in metres. It only has
+# to be roughly right (a centimetre or two): the tool never rotates, so any error
+# here is the same offset at calibration and at drawing, and cancels.
 MARKER_LENGTH = 0.120
 # How far above the paper the marker travels between strokes.
 PEN_UP = 0.030
@@ -57,7 +67,12 @@ WAYPOINT_SPACING = 0.004
 # How close the marker has to land, by the arm's own kinematics, for an IK
 # answer to be used.
 IK_TOLERANCE = 0.001   # m
-PEN_TOLERANCE = 0.03   # rad of marker tilt
+# The marker's tilt is what turns the tool offset into drawing error (a 15 cm
+# marker 0.005 rad off vertical moves its tip 0.75 mm), so the IK is run until
+# the tilt is a fifth of this.
+PEN_TOLERANCE = 0.005  # rad
+# Straight down, always: see the top of this file.
+PEN_DIR = np.array([0.0, 0.0, -1.0])
 # Your inverse_kinematics runs 100 steps of 0.1 and returns. That was sized for
 # the metre-long links of Assignment 4; the xArm's are a third of that, so one
 # call gets only part of the way, and it is called again from its own answer
@@ -76,8 +91,20 @@ SIM_PAPER_CENTER = (0.42, 0.0, 0.004)
 SIM_PAPER_YAW = math.radians(3.0)
 SIM_PAPER_TILT = (math.radians(0.8), math.radians(-0.5))  # about x, about y
 SIM_TOUCH_NOISE = 0.0015  # m, how far off each simulated corner touch lands
+# The simulator's marker is not the one MARKER_LENGTH describes, as a real one
+# never quite is: in the flange frame its tip is 18 mm further out and 5 mm off
+# the axis. Calibration absorbs it; see the top of this file.
+SIM_MARKER_TIP = np.array([0.004, -0.003, MARKER_LENGTH + 0.018])
 
 PAPER_MARGIN = 0.010  # m strokes must keep from the paper's edges
+
+# Moves between poses (to the home pose, from it to the drawing pose, to the
+# start of a drawing) keep the marker tip this far above the table, or above
+# the paper once it has been calibrated. A straight joint move between the
+# home pose and the drawing pose would put it through the table, so they go
+# via a pose with joint 2 raised this much; see `route`.
+MOVE_CLEARANCE = 0.02  # m
+HOME_LIFT = 0.9  # rad
 
 
 def is_real():
@@ -128,8 +155,13 @@ class ArmModel:
         self._pin.forwardKinematics(self.model, self.data, np.asarray(q, dtype=float))
         return [self.data.oMi[i] for i in range(1, 8)]
 
+    def flange(self, q):
+        """(position (3,), rotation (3, 3)) of the flange in the base frame."""
+        frame = self._frames(q)[6]
+        return frame.translation.copy(), frame.rotation.copy()
+
     def tip(self, q):
-        """Marker tip in the base frame, (3,)."""
+        """Marker tip in the base frame, (3,): MARKER_LENGTH along the flange's z."""
         flange = self._frames(q)[6]
         return flange.translation + self.marker_length * flange.rotation[:, 2]
 
@@ -177,6 +209,13 @@ class ArmModel:
             signs.append(math.copysign(1.0, _wrap(moved[k] - thetas[k])))
         self._signs = np.array(signs)
         self._offsets = thetas.copy()
+        # With the marker pointing down, joints 1 and 7 both turn the flange
+        # about the vertical; this is how far joint 7 turns it per radian.
+        down = READY_Q.copy()
+        turned = down.copy()
+        turned[6] += 0.1
+        heading = lambda q: math.atan2(*self.flange(q)[1][[1, 0], 0])  # noqa: E731
+        self._twist_sign = math.copysign(1.0, _wrap(heading(turned) - heading(down)))
         # The marker is not along the third link (the flange is offset from
         # joint 6), so the link's heading and the marker's differ by this.
         self.pen_offset = _wrap(pen - headings[2])
@@ -187,12 +226,16 @@ class ArmModel:
         return float(q[0]), self._signs * q[list(self.PLANAR_JOINTS)] + self._offsets
 
     def joints(self, yaw, thetas, near):
-        """The 7 joint values for (yaw, thetas), each the 2*pi-copy nearest `near`."""
+        """The 7 joint values for (yaw, thetas), each the 2*pi-copy nearest `near`.
+
+        Joint 7 undoes joint 1's turn of the flange, so the tool keeps the
+        heading it has at READY_Q (joint 1 and joint 7 both 0) wherever it goes.
+        """
         q = np.zeros(7)
         q[0] = yaw
         q[list(self.PLANAR_JOINTS)] = (np.asarray(thetas, dtype=float) - self._offsets) / self._signs
-        q[6] = near[6]
-        for j in (0,) + self.PLANAR_JOINTS:
+        q[6] = -yaw / self._twist_sign
+        for j in (0,) + self.PLANAR_JOINTS + (6,):
             q[j] += 2.0 * math.pi * round((near[j] - q[j]) / (2.0 * math.pi))
         return q
 
@@ -289,6 +332,13 @@ class PenIK:
         return (np.linalg.norm(ee[:2] - goal[:2]) < 0.2 * IK_TOLERANCE
                 and abs(_wrap(ee[2] - goal[2])) < 0.2 * PEN_TOLERANCE)
 
+    def move_to(self, arm, point, speed=0.15):
+        """Put the marker tip on `point`, marker down, with a planned move."""
+        q = self.solve(point, PEN_DIR, arm.joint_values)
+        if not arm.set_joint_targets(q, speed=speed):
+            raise IKError("the arm did not get there")
+        return q
+
     @staticmethod
     def _unreachable_tilt(point, pen_dir):
         """The part of the marker's tilt the arm's plane can't take out."""
@@ -312,13 +362,16 @@ def load_robot_class():
 # ----------------------------------------------------------------------
 
 
-def save_calibration(path, corners, source):
+def save_calibration(path, corners, source, sim_marker_offset=None):
     data = {
         "corners": np.asarray(corners, dtype=float).tolist(),
         "source": source,
         "marker_length": MARKER_LENGTH,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    if sim_marker_offset is not None:
+        # Only the simulator knows where its marker really is.
+        data["sim_marker_offset"] = np.asarray(sim_marker_offset, dtype=float).tolist()
     Path(path).write_text(json.dumps(data, indent=2) + "\n")
 
 
@@ -452,15 +505,15 @@ def tool_path(strokes):
 def plan_drawing(strokes, plane, H, ik, seed_q, progress=True):
     """Solve your IK along the whole drawing, before anything moves.
 
-    The path is laid out on the paper, then carried into the robot's frame by
-    your paper_to_robot, and the marker points along minus your plane normal.
+    The path is laid out on the paper and carried into the robot's frame by
+    your paper_to_robot. The marker points straight down throughout, even on a
+    tilted sheet: the same way it pointed when the corners were touched.
     """
     paper_pts, speeds, down = tool_path(strokes)
     robot_pts = np.asarray(plane.paper_to_robot(H, paper_pts), dtype=float)
     gaps = np.linalg.norm(np.diff(robot_pts, axis=0), axis=1)
     t_way = np.concatenate([[0.0], np.cumsum(gaps / speeds[1:])])
-    return plan_path(robot_pts, t_way, down, -np.asarray(H[:3, 2], dtype=float), ik,
-                     seed_q, progress)
+    return plan_path(robot_pts, t_way, down, PEN_DIR, ik, seed_q, progress)
 
 
 def plan_touches(targets, normal, ik, seed_q, dwell=0.8):
@@ -489,7 +542,7 @@ def plan_touches(targets, normal, ik, seed_q, dwell=0.8):
         down.append(True)
         middles.append(times[-1] - dwell / 2)
         go(target + PEN_UP * normal, PLUNGE_SPEED)
-    plan = plan_path(np.array(points), np.array(times), np.array(down), -normal, ik,
+    plan = plan_path(np.array(points), np.array(times), np.array(down), PEN_DIR, ik,
                      seed_q, progress=False)
     return plan, [int(round(t * RATE)) for t in middles]
 
@@ -529,9 +582,7 @@ def plan_path(robot_pts, t_way, down, pen_dir, ik, seed_q, progress=True):
 def check_plan(plan, every=5):
     """The library's own safety check (self-collision, safety box) on the plan,
     before it runs. The real arm would refuse these setpoints mid-drawing."""
-    from xarm7_lib import SafetyGuard
-
-    guard = SafetyGuard()
+    guard = _guard()
     for k in list(range(0, len(plan.q), every)) + [len(plan.q) - 1]:
         violation = guard.check(plan.q[k])
         if violation is not None:
@@ -539,14 +590,63 @@ def check_plan(plan, every=5):
                              f"{plan.t[k]:.1f} s in: {violation}")
 
 
-def joint_move_clear(model, plane, H, q_from, q_to, clearance=0.01):
-    """Whether the marker stays above the paper on a straight joint move."""
-    for s in np.linspace(0.0, 1.0, 40):
-        q = (1.0 - s) * q_from + s * q_to
-        h = np.asarray(plane.robot_to_paper(H, model.tip(q)[None]), dtype=float)[0, 2]
-        if h < clearance:
-            return False
-    return True
+_GUARD = []
+
+
+def _guard():
+    """The library's safety check, built once (building it takes a moment)."""
+    if not _GUARD:
+        from xarm7_lib import SafetyGuard
+        _GUARD.append(SafetyGuard())
+    return _GUARD[0]
+
+
+def lifted(q):
+    """`q` with joint 2 raised by HOME_LIFT: the whole arm pitched up."""
+    q = np.array(q, dtype=float)
+    q[1] -= HOME_LIFT
+    return q
+
+
+def route(model, q_from, q_to, height=None, clearance=MOVE_CLEARANCE):
+    """Waypoints (ending at q_to) for getting from q_from to q_to safely.
+
+    Each leg is a straight joint move, as set_joint_targets makes, and has to
+    keep the marker tip `clearance` up (by `height(tip)`, which defaults to the
+    height above the table) and the arm clear of the guard the whole way. The
+    direct move is tried first, then detours via a raised arm and the ready
+    pose. None if nothing works.
+    """
+    height = height or (lambda tip: tip[2])
+    guard = _guard()
+
+    def leg_ok(a, b):
+        for t in np.linspace(0.0, 1.0, 40):
+            if height(model.tip((1.0 - t) * a + t * b)) < clearance:
+                return False
+        return guard.check_path(a, b)[0] is None
+
+    q_from, q_to = np.asarray(q_from, float), np.asarray(q_to, float)
+    for via in ([], [lifted(q_from)], [READY_Q], [lifted(q_from), READY_Q],
+                [READY_Q, lifted(q_to)], [lifted(q_from), READY_Q, lifted(q_to)]):
+        points = [q_from, *via, q_to]
+        if all(leg_ok(a, b) for a, b in zip(points[:-1], points[1:])):
+            return points[1:]
+    return None
+
+
+def move_safely(arm, model, q_to, message, height=None):
+    """A planned move to q_to, along `route`, after hands are clear."""
+    legs = route(model, arm.joint_values, q_to, height)
+    if legs is None:
+        raise SystemExit(
+            "[arm] there is no safe way from where the arm is to where it needs to go "
+            "(the marker would come within 2 cm of the table or paper). Move it up and "
+            "over the sheet by hand (`python -m xarm7_lib.free_drive`) and try again.")
+    hands_clear(message)
+    for q in legs:
+        if not arm.set_joint_targets(q, speed=MOVE_SPEED):
+            raise SystemExit("[arm] the arm stopped short of the move")
 
 
 # ----------------------------------------------------------------------
@@ -593,17 +693,14 @@ def stream(arm, plan, on_tick=None):
 def run(arm, plan, model, plane=None, H=None, scene=None, label="drawing"):
     """Move to the plan's start, then stream it. Returns the measured joints.
 
-    With a paper frame, the move to the start is refused if it would bring the
-    marker near the paper on the way.
+    The move to the start keeps the marker clear of the paper (of the table,
+    without a paper frame), detouring if it has to.
     """
-    if H is not None and not joint_move_clear(model, plane, H, arm.joint_values, plan.q[0]):
-        raise SystemExit(
-            "the move to the start of the drawing would bring the marker within 1 cm "
-            "of the paper on the way. Move the arm up and over the sheet first "
-            "(`python -m xarm7_lib.free_drive`), then run this again.")
-    hands_clear(f"moving to the start of the {label}")
-    if not arm.set_joint_targets(plan.q[0], speed=MOVE_SPEED):
-        raise SystemExit("the arm never reached the start of the drawing")
+    height = None
+    if H is not None:
+        height = lambda tip: np.asarray(plane.robot_to_paper(H, tip[None]), dtype=float)[0, 2]  # noqa: E731
+    move_safely(arm, model, plan.q[0], f"moving to the start of the {label}", height)
+    hands_clear(f"starting the {label}")
     print(f"[arm] {label}: {plan.duration:.0f} s")
 
     def on_tick(k, q):
@@ -650,6 +747,17 @@ def sim_paper_frame():
     return H
 
 
+def sim_marker_tip(model, q):
+    """Where the simulator's marker really is, (3,): not where MARKER_LENGTH says."""
+    position, rotation = model.flange(q)
+    return position + rotation @ SIM_MARKER_TIP
+
+
+def sim_marker_offset(model):
+    """Real tip minus computed tip, with the tool in its one orientation."""
+    return sim_marker_tip(model, READY_Q) - model.tip(READY_Q)
+
+
 def sim_paper_corners():
     width, height = SIM_PAPER_SIZE
     H = sim_paper_frame()
@@ -660,10 +768,10 @@ def sim_paper_corners():
 class SimScene:
     """The paper, the marker and the ink, drawn into the simulator's meshcat view.
 
-    Ink is wherever the marker tip is at or below the *true* simulated sheet,
-    so a calibration that is off shows up as ink that skips or a pen that
-    dives: the drawing is planned on your calibrated sheet, and inked on the
-    real one.
+    Ink is wherever the simulator's real marker tip (SIM_MARKER_TIP, not the
+    computed one) is at or below the *true* simulated sheet, so a calibration
+    that is off shows up as ink that skips or a pen that dives: the drawing is
+    planned on your calibrated sheet, and inked on the real one.
     """
 
     INK_HEIGHT = 0.0005  # m above the sheet that still leaves a mark
@@ -688,7 +796,7 @@ class SimScene:
                             g.MeshLambertMaterial(color=0xF7F5EE))
             node.set_transform(self.world @ center)
             self.viz.viewer["lab/marker"].set_object(
-                g.Cylinder(self.model.marker_length, 0.007),
+                g.Cylinder(float(np.linalg.norm(SIM_MARKER_TIP)), 0.007),
                 g.MeshLambertMaterial(color=0x2B59C3))
         if H_cal is not None:
             self.outline("calibrated", H_cal, 0xE0A030)
@@ -730,7 +838,7 @@ class SimScene:
                 self._line(f"lab/plan/{i}", np.array(piece) + [0, 0, 0.0015], 0xB0B8C8)
 
     def update(self, q, force=False):
-        tip = self.model.tip(q)
+        tip = sim_marker_tip(self.model, q)
         local = (tip - self.H[:3, 3]) @ self.H[:3, :3]
         if local[2] <= self.INK_HEIGHT:
             if not self.ink or self.ink[-1] is None:
@@ -742,10 +850,11 @@ class SimScene:
         if self.viz is None or (not force and now - self._last_draw < 0.08):
             return
         self._last_draw = now
-        axis = self.model.pen_axis(q)
+        flange, _ = self.model.flange(q)
+        axis = tip - flange
         T = np.eye(4)
         T[:3, :3] = self._frame_for(axis)
-        T[:3, 3] = tip - 0.5 * self.model.marker_length * axis
+        T[:3, 3] = 0.5 * (tip + flange)
         with self.viz.lock:
             self.viz.viewer["lab/marker"].set_transform(self.world @ T)
         marks = [m for m in self.ink if m]
