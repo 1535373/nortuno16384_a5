@@ -13,7 +13,7 @@
 \section{Code Questions}
 
 \begin{questions}
-    \titledquestion{Double Pendulum Simulation}[45]
+    \titledquestion{Double Pendulum Simulation}[40]
     In this question you will simulate the double pendulum using the equations of motion you derived previously. All the code is in the \verb!code/! folder; \verb!code/README.md! explains how to run each script. You edit and submit only \verb!double_pendulum.py!.
 
     Use the same conventions as your derivation: $q = [\theta_1, \theta_2]^\top$ with both angles measured from the downward vertical (counterclockwise positive), $\theta_2$ the absolute angle of link 2 rather than its angle relative to link 1, and point masses $m_1, m_2$ on massless links $\ell_1, \ell_2$. There is no applied torque in the code ($\tau = 0$). In your code, use the constants \verb!M1!, \verb!M2!, \verb!L1!, \verb!L2! and \verb!G! at the top of \verb!double_pendulum.py! rather than writing the numbers in directly, because the autograder changes them.
@@ -21,7 +21,7 @@
     \begin{enumerate}[label=\alph*.]
         \item \text{[20 points]} Implement \verb!dynamics(q, qd)!, which returns the joint accelerations $\ddot q$ as an array of shape $(2,)$. Your Euler-Lagrange equations are linear in $\ddot q$, so write them as $M(q)\ddot q = b(q, \dot q)$ and solve for $\ddot q$ with \verb!np.linalg.solve!.
 
-        \item \text{[15 points]} Implement \verb!simulate(q0, qd0, T, dt)!. We recommend using a library like \verb!scipy.integrate.solve_ivp! to integrate the equations of motion with the supplied \verb|RTOL| and \verb|ATOL| tolerances, but also encourage you to try implementing your own integrator to learn a little about numerical integration. You'll see the difference in (c).
+        \item \text{[15 points]} Implement \verb!simulate(q0, qd0, T, dt)!. We recommend using a library like \verb!scipy.integrate.solve_ivp! to integrate the equations of motion with the supplied \verb|RTOL| and \verb|ATOL| tolerances, but also encourage you to try implementing your own integrator to learn a little about numerical integration. You'll see the difference in (c)'s energy check.
 
         The output format should be a tuple \verb!(t, q, qd)! of numpy arrays, sampled every \verb!dt! seconds from $0$ to $T$ inclusive (use \verb!np.arange(0, T + dt / 2, dt)!, so there are $N = T/\Delta t + 1$ samples):
         \begin{itemize}
@@ -35,15 +35,9 @@
 
         \item \text{[5 points]} With no friction and no applied torque, the total energy $E = T + V$ of the double pendulum stays constant. That gives you a way to check a simulation without knowing the right answer: if $E$ changes over time, the simulation is not exactly following the physics.
 
-        Implement \verb!total_energy(q, qd)! in \verb!double_pendulum.py! using your $T$ and $V$ from your derivation (the autograder checks it too). Then run \verb!python energy_check.py!, which simulates the pendulum for 20 seconds and plots its total energy over time.
+        Implement \verb!total_energy(q, qd)! in \verb!double_pendulum.py! using your $T$ and $V$ from your derivation; the autograder checks it.  Then run \verb!python energy_check.py!, which simulates the pendulum for 20 seconds and plots its total energy over time.  With \verb!solve_ivp! at the supplied tolerances the line should be flat; if you wrote your own integrator, see how far it drifts.
 
-        Does your simulation conserve energy? If the energy changes noticeably, what could cause it?
-        \begin{tcolorbox}[height=3cm]
-        \end{tcolorbox}
-
-        \item \text{[5 points]} Run \verb!python visualize.py --chaos 5 --plot!, which simulates five pendulums whose starting $\theta_2$ values differ by only $0.001$ rad. About how long do the pendulums stay together before they visibly separate? Now try a small initial angle, \verb!python visualize.py --chaos 5 --q0 10 5!. Is the motion still chaotic? Explain the difference.
-        \begin{tcolorbox}[height=3cm]
-        \end{tcolorbox}
+        \textbf{Try it (not graded).}  Run \verb!python visualize.py --chaos 5 --plot!, which simulates five pendulums whose starting $\theta_2$ values differ by only $0.001$ rad, and watch how long they stay together.  Then try a small initial angle, \verb!python visualize.py --chaos 5 --q0 10 5!, and compare.
     \end{enumerate}
 \end{questions}
 
@@ -95,7 +89,17 @@ calls it again from its own answer until the marker lands within 1~mm.
 The marker always points straight down, and joint 7 turns against joint 1 so
 that the tool never rotates about the vertical either.  The tool only ever
 translates: in calibration and in drawing alike, it keeps one fixed
-orientation.  Part (c) asks you why that matters.
+orientation.  That is what makes the drawing independent of the marker.  The
+code computes the tip as $\vec{t} = \vec{f} + \mat{R}\,[0, 0, \ell]^\top$ from the
+flange position $\vec{f}$ and orientation $\mat{R}$, with $\ell$ the nominal
+\verb!MARKER_LENGTH!; the real tip is $\vec{f} + \mat{R}\,\vec{d}$ for some
+$\vec{d}$ nobody measured.  With $\mat{R}$ fixed, the two differ by the same
+vector everywhere, so the calibration, made with the computed tip, finds the
+paper shifted by that vector, and the drawing, planned with the computed tip,
+puts the real tip back on it.  (The simulator's marker is 18~mm longer and 5~mm
+off-axis compared with \verb!MARKER_LENGTH!, and the ink still lands within
+about a millimetre.)  It is also why you never push the marker onto the paper
+by hand: a hand would hold it at a different angle each time.
 
 \subsection{Setting Up}
 
@@ -141,53 +145,55 @@ the paper.}
     \setcounter{question}{1}
     \titledquestion{Drawing RKD on the xArm7}[50]
 
+    This question is graded on your \verb!plane.py! (autograded) and on one
+    video of the real arm.  There is nothing to write up.
+
     \begin{enumerate}[label=\alph*.]
         \item \text{[10 points]} \textbf{The paper's frame.}  Calibration gives
         you four touched corners $\vec{p}_1, \vec{p}_2, \vec{p}_3, \vec{p}_4$ in
         the robot's base frame, in the order of Figure~\ref{fig:paper}.  They
         will not lie exactly on one plane: the paper isn't perfectly flat, and
-        each touch is only as good as your eye.
-        \begin{enumerate}[label=(\roman*)]
-            \item Show that $\vec{n} = (\vec{p}_3 - \vec{p}_1) \times (\vec{p}_4 - \vec{p}_2)$
-                  is perpendicular to both diagonals of the sheet, and explain
-                  why, when the four corners are coplanar, it is normal to the
-                  sheet.  With corners ordered as in Figure~\ref{fig:paper}, which
-                  way does it point?
-            \item You could instead take the normal from three corners, for
-                  example $(\vec{p}_2 - \vec{p}_1) \times (\vec{p}_4 - \vec{p}_1)$.
-                  Why is the diagonal version better for four noisy touches?
-            \item Let $\hat{n} = \vec{n} / \|\vec{n}\|$ and let
-                  $\vec{c} = \frac{1}{4}\sum_i \vec{p}_i$ be the centroid.  Write
-                  formulas for the origin $\vec{o}$ (corner 1, moved along
-                  $\hat{n}$ onto the plane through $\vec{c}$), the unit $x$ axis
-                  $\hat{x}$ (from corner 1 towards corner 2, within the plane), and
-                  $\hat{y}$.  Assemble them into the $4 \times 4$ homogeneous
-                  transform $\mat{H}$ of the paper frame in the base frame.
-            \item A point $(u, v)$ on the paper, at height $h$ above it, is at
-                  $\mat{H}\,[u, v, h, 1]^\top$ in the base frame.  Write the
-                  inverse map, from a base-frame point back to $(u, v, h)$,
-                  without a matrix inverse.
-        \end{enumerate}
-        \begin{tcolorbox}[height=6cm]
-        \end{tcolorbox}
-
-        \item \text{[10 points]} \textbf{Code it.}  Implement your formulas in
-        \verb!lab/plane.py!: \verb!plane_frame!, \verb!paper_to_robot! and
-        \verb!robot_to_paper!.  These three are autograded, on randomly perturbed
-        corners as in Question~1.  Then check them before going anywhere near
-        the arm:
+        each touch is only as good as your eye.  So the frame uses all four:
+        \begin{itemize}
+            \item the unit normal from the cross product of the diagonals,
+                  $\hat{n} = \vec{n} / \|\vec{n}\|$ with
+                  $\vec{n} = (\vec{p}_3 - \vec{p}_1) \times (\vec{p}_4 - \vec{p}_2)$;
+                  it is perpendicular to both diagonals, weighs all four touches
+                  alike, and with the corners in this order points up out of the
+                  paper;
+            \item the plane through the centroid
+                  $\vec{c} = \frac{1}{4}\sum_i \vec{p}_i$;
+            \item the origin $\vec{o}$: corner 1, moved along $\hat{n}$ onto that
+                  plane;
+            \item the $x$ axis $\hat{x}$: $\vec{p}_2 - \vec{p}_1$ with its
+                  component along $\hat{n}$ removed, normalized; and
+                  $\hat{y} = \hat{n} \times \hat{x}$.
+        \end{itemize}
+        Work out the formulas for $\vec{o}$ and $\hat{x}$, and implement them in
+        \verb!lab/plane.py!: \verb!plane_frame! returns the $4 \times 4$
+        homogeneous transform
+        \[
+            \mat{H} = \begin{bmatrix} \hat{x} & \hat{y} & \hat{n} & \vec{o} \\
+                                      0 & 0 & 0 & 1 \end{bmatrix};
+        \]
+        \verb!paper_to_robot! maps a point $(u, v)$ on the paper, at height $h$
+        above it, to $\mat{H}\,[u, v, h, 1]^\top$; and \verb!robot_to_paper! is its
+        inverse, written without a matrix inverse.  These three are autograded,
+        on randomly perturbed corners as in Question~1.  Then check them before
+        going anywhere near the arm:
         \begin{verbatim}
 python check_plane.py
 \end{verbatim}
         It tries your frame on sheets whose answer is known (flat, turned,
         tilted, a whiteboard standing up), on noisy touches checked against
-        every property your formula promises, and on the graded cases, the same
+        every property the formula promises, and on the graded cases, the same
         ones \verb!local_autograder.py -p plane! runs from \verb!code/!.  Every
         failure says what is wrong.  A wrong frame sends the marker
         into the table, so do not take the lab past this point until it reports
         no failures.
 
-        \item \text{[10 points]} \textbf{Draw it, in simulation.}
+        \item \textbf{Draw it, in simulation} (not graded, but do it before your
+        lab session).
         \begin{enumerate}[label=(\roman*)]
             \item Copy your Assignment 4 \verb!robot.py! over
                   \verb!lab/robot.py!, whole and unchanged, for example
@@ -204,7 +210,7 @@ python check_plane.py
                   your frame is from the sheet's true one.  It should be within a
                   couple of millimetres.  Then practise the real arm's procedure:
                   \verb!python calibrate.py --manual! has you jog the marker onto
-                  each corner yourself, with the keys of part (d), while it tells
+                  each corner yourself, with the keys of part (c), while it tells
                   you how far the tip is from the paper.
             \item Draw the strokes for the letters \textbf{RKD}:
                   \verb!python sketch.py strokes/rkd.json!.  Left-click to place
@@ -222,23 +228,9 @@ python check_plane.py
                   as \verb!results/rkd-sim.png!: your strokes, dashed, beside the
                   path the marker really took.
         \end{enumerate}
-        Include \verb!results/rkd-sim.png! in your PDF.
 
-        The simulator's marker is not the one \verb!MARKER_LENGTH! describes: its
-        tip is 18~mm further from the flange and 5~mm off the flange's axis, as a
-        real marker in a real holder might be.  Yet the ink lands within about a
-        millimetre of your strokes.  Explain why.  Hint: the code computes a tip
-        position $\vec{t} = \vec{f} + \mat{R}\,[0, 0, \ell]^\top$ from the flange
-        position $\vec{f}$ and orientation $\mat{R}$, and the real tip is
-        $\vec{f} + \mat{R}\,\vec{d}$ for some unknown $\vec{d}$.  What is the
-        difference between the two when $\mat{R}$ never changes?  What would go
-        wrong if you calibrated by pushing the marker onto the corners by hand,
-        holding it at whatever angle felt natural?
-        \begin{tcolorbox}[height=4cm]
-        \end{tcolorbox}
-
-        \item \text{[20 points]} \textbf{Draw it on the xArm7.}  Graded by hand,
-        from a video and the result plot.  The sheet is taped to the table for
+        \item \text{[40 points]} \textbf{Draw it on the xArm7.}  Graded by hand,
+        from your video.  The sheet is taped to the table for
         you, about 50~cm straight out from the base; don't move it.  In lab, with
         \verb!ROBOT_IP! set:
         \begin{enumerate}[label=(\roman*)]
@@ -301,24 +293,18 @@ python check_plane.py
 
         \textbf{Deliverable.}  One video, a phone is fine, showing the arm write
         RKD from start to finish, with the paper visible.  Put it in
-        \verb!lab/handin/!.  \verb!create_submission.py! also collects your
-        \verb!lab/robot.py!, \verb!lab/plane.py!, your strokes, both calibrations
-        and everything in \verb!lab/results!.  Include \verb!results/rkd-robot.png!
-        in your PDF, and say in a sentence or two where the real drawing differs
-        from your strokes, and why.
-        \begin{tcolorbox}[height=3cm]
-        \end{tcolorbox}
+        \verb!lab/handin/!.  \verb!create_submission.py! packages it with your
+        \verb!lab/robot.py!, \verb!lab/plane.py!, your strokes, your
+        calibrations and \verb!lab/results!.
     \end{enumerate}
 \end{questions}
 
 \begin{submissionChecklist}
-        \item Create a PDF of your answers to the questions that ask for one (Question 1 (c) and (d), Question 2 (a), (c) and (d)) with the name \verb!<andrew_id>.pdf! and submit it to Gradescope.
-        \item Include \verb!lab/results/rkd-sim.png! and \verb!lab/results/rkd-robot.png! in that PDF.
         \item Run \verb!local_autograder.py! and \verb!lab/check_plane.py!, and confirm they report no failures.
         \item Put your drawing video in \verb!lab/handin!.
         \item Run \verb!python create_submission.py! from the \verb!code! folder.
-        \item Rename \verb|submission.zip| and upload \verb!<andrew_id>.zip! to Gradescope.
-        \item Coding questions are autograded, with no limit on number of submissions within the mandated deadline.
+        \item Rename \verb|submission.zip| and upload \verb!<andrew_id>.zip! to Gradescope.  There is no PDF to submit.
+        \item The code is autograded, with no limit on number of submissions within the mandated deadline.
 \end{submissionChecklist}
 
 \end{document}
