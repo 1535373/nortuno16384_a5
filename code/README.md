@@ -1,9 +1,9 @@
 # Assignment 5: Double Pendulum Simulation
 
-Simulate the double pendulum from the written section with the equations of
-motion you derived there. See `assignment5.pdf` for the full writeup.
+Simulate the double pendulum with the equations of motion you derived
+previously. See `assignment5.pdf` for the full writeup.
 
-Question 5, the hands-on lab (drawing with the xArm7), lives in `../lab`; see
+Question 2, the hands-on lab (drawing with the xArm7), lives in `../lab`; see
 `../lab/README.md`. Its `plane.py` is graded by the same autograder as this
 folder's code (`python local_autograder.py -p plane`).
 

@@ -2,7 +2,7 @@
 
 The xArm7 holds a marker and writes on a sheet of paper. Your Assignment 4
 `Robot` does the inverse kinematics; you find the paper by touching its four
-corners. See Question 5 in `assignment5.pdf` for the full procedure, the
+corners. See Question 2 in `assignment5.pdf` for the full procedure, the
 written part and the safety rules.
 
 ## Setup

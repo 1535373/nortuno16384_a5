@@ -1,4 +1,4 @@
-"""Autograder for HW5: the double pendulum (Q4) and the drawing lab's paper frame (Q5).
+"""Autograder for HW5: the double pendulum (Q1) and the drawing lab's paper frame (Q2).
 
     python local_autograder.py                 # grade everything
     python local_autograder.py -p dynamics     # one part: energy, dynamics, simulate or plane

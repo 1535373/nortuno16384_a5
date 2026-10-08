@@ -1,8 +1,9 @@
 """Double pendulum dynamics and simulation.  THIS IS THE FILE YOU EDIT AND SUBMIT.
 
-The system is the double pendulum from the written section: point masses M1 and
+The system is the double pendulum you derived previously: point masses M1 and
 M2 on massless rods of length L1 and L2.  Both angles are measured from the
-downward vertical (absolute angles, as in the writeup figure).  There is no
+downward vertical (absolute angles: theta_2 is link 2's angle, not its angle
+relative to link 1).  There is no
 applied torque: the pendulum swings freely under gravity.
 
     q  = [theta_1, theta_2]            (radians)
@@ -51,7 +52,7 @@ def total_energy(q, qd):
     Returns:
         energy at each of the N samples, shape (N,).
 
-    Use your kinetic and potential energy from the written section.  Measure
+    Use your kinetic and potential energy from your derivation.  Measure
     the potential energy from the pivot height (y = 0), with y pointing up.
     """
     q, qd = np.asarray(q, dtype=float), np.asarray(qd, dtype=float)
@@ -73,7 +74,7 @@ def dynamics(q, qd):
         qdd: joint accelerations [theta_1_ddot, theta_2_ddot], a numpy array of
              shape (2,).
 
-    Hint: your Euler-Lagrange equations from the written section are linear in
+    Hint: your Euler-Lagrange equations are linear in
     qdd.  Write them as  M(q) qdd = b(q, qd)  with a 2x2 matrix M, and
     solve for qdd with np.linalg.solve.
     """
