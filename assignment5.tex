@@ -3,7 +3,7 @@
 \usepackage{enumitem}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows,arrows.meta,matrix,fit,backgrounds,calc,math,patterns,patterns.meta,intersections,fpu}
-\newcommand{\assignmentname}{Assignment 2: Jacobians}
+\newcommand{\assignmentname}{Assignment 5: Dynamics}
 
 \begin{document}
 \maketitle
@@ -140,12 +140,17 @@
 
 \section{Hands-on Lab: Drawing with the xArm7}
 
-% STAFF TODO (not for students): set MARKER_LENGTH in lab/drawing_arm.py to the
-% flange-to-tip length of the station's marker holder. A centimetre or two off
-% is fine (calibration cancels it, see the planar-arm subsection), but it should
-% be roughly right. The holder must let the marker slide back at least PRESS
-% (1 mm); a rigid mount pushes the tip into the table. Tape a sheet of paper (or lay a small
-% whiteboard) on the table in front of each arm, roughly 30--55 cm out.
+% STAFF TODO (not for students):
+% - Set MARKER_LENGTH in lab/drawing_arm.py to the flange-to-tip length of the
+%   station's marker holder. A centimetre or two off is fine (calibration
+%   cancels it, see the planar-arm subsection), but it should be roughly right.
+%   It must be under ~16 cm: in the home pose the flange is 17 cm above the table.
+% - The holder must let the marker slide back at least PRESS (1 mm); a rigid
+%   mount pushes the tip into the table.
+% - Tape a US-letter sheet, landscape, on the table in front of each arm,
+%   centred 50 cm straight out from the base (its edges 39 and 61 cm out). From
+%   there every corner can be reached both from the home pose and in the drawing
+%   pose; the simulator's sheet sits in the same place.
 
 In this section the xArm7 holds a marker and writes on a sheet of paper.  You
 already have most of the pieces: your Assignment~4 \verb!Robot! does the
@@ -232,7 +237,7 @@ the paper.}
         you four touched corners $\vec{p}_1, \vec{p}_2, \vec{p}_3, \vec{p}_4$ in
         the robot's base frame, in the order of Figure~\ref{fig:paper}.  They
         will not lie exactly on one plane: the paper isn't perfectly flat, and
-        your hand isn't perfectly steady.
+        each touch is only as good as your eye.
         \begin{enumerate}[label=(\roman*)]
             \item Show that $\vec{n} = (\vec{p}_3 - \vec{p}_1) \times (\vec{p}_4 - \vec{p}_2)$
                   is perpendicular to both diagonals of the sheet, and explain
@@ -275,10 +280,14 @@ python check_plane.py
 
         \item \text{[10 points]} \textbf{Draw it, in simulation.}
         \begin{enumerate}[label=(\roman*)]
-            \item Copy your \verb!Robot! class from Assignment 4 into
-                  \verb!lab/robot.py!.  You don't need to change anything: the
-                  forward kinematics, Jacobian and gradient-descent IK you already
-                  wrote are what the arm runs.
+            \item Copy your Assignment 4 \verb!robot.py! over
+                  \verb!lab/robot.py!, whole and unchanged, for example
+                  \verb!cp ../../Assignment4/ex2/robot.py robot.py! (the
+                  \verb!robot.py! in \verb!ex1!, \verb!ex2! and \verb!ex3! is the
+                  same class; take the one with your IK in it).  The forward
+                  kinematics, Jacobian and gradient-descent IK you already wrote
+                  are what the arm runs.  If it is still the stub, or the IK isn't
+                  filled in, the lab scripts say so before anything moves.
             \item Calibrate the simulator's sheet: \verb!python calibrate.py!.
                   The simulator has a sheet of paper of its own, placed a little
                   crooked on purpose.  It touches the four corners with your IK,
@@ -320,7 +329,9 @@ python check_plane.py
         \end{tcolorbox}
 
         \item \text{[20 points]} \textbf{Draw it on the xArm7.}  Graded by hand,
-        from a video and the result plot.  In lab, with \verb!ROBOT_IP! set:
+        from a video and the result plot.  The sheet is taped to the table for
+        you, about 50~cm straight out from the base; don't move it.  In lab, with
+        \verb!ROBOT_IP! set:
         \begin{enumerate}[label=(\roman*)]
             \item \verb!git pull! your code onto the lab machine, and run
                   \verb!python check_plane.py! once more.
@@ -330,8 +341,10 @@ python check_plane.py
                             marker pointing down, a few centimetres over the table,
                             with joints 1, 4 and 7 turning about vertical axes.  For
                             each corner in turn, swing the arm by hand until the
-                            marker is over the corner (or as close as it will go),
-                            and press enter.  Only those three joints are free.  If
+                            marker is over the corner, and press enter.  It only
+                            has to be close: if the arm won't go all the way, press
+                            enter where it stops, and the jog below covers the
+                            rest.  Only those three joints are free.  If
                             you push one of the others out of place, or take the
                             marker out of the area the arm can draw on, the arm
                             locks where it is, asks you to let go, and moves back.
@@ -394,7 +407,7 @@ python check_plane.py
         \item Include \verb!lab/results/rkd-sim.png! and \verb!lab/results/rkd-robot.png! in that PDF.
         \item Run \verb!local_autograder.py! and \verb!lab/check_plane.py!, and confirm they report no failures.
         \item Put your drawing video in \verb!lab/handin!.
-        \item Run \verb!create_submission.py! in the python terminal.
+        \item Run \verb!python create_submission.py! from the \verb!code! folder.
         \item Rename \verb|submission.zip| and upload \verb!<andrew_id>.zip! to Gradescope.
         \item Coding questions are autograded, with no limit on number of submissions within the mandated deadline.
 \end{submissionChecklist}

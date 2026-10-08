@@ -67,10 +67,18 @@ MOVES = {"w": (-1, 0, 0), "s": (1, 0, 0), "a": (0, -1, 0), "d": (0, 1, 0),
          "r": (0, 0, 1), "f": (0, 0, -1)}
 STEPS = {"1": 0.0005, "2": 0.002, "3": 0.010}
 
-# Where the marker may be swung in the home pose: the part of the table the
-# drawing pose can reach. Past it, the arm locks.
-REACH = (0.28, 0.64)  # m from joint 1's axis
-SIDEWAYS = math.radians(28)  # either side of straight ahead
+# Where the marker may be swung in the home pose: around the part of the table
+# the drawing pose can reach, with a few centimetres' slack, since jogging
+# covers the last of it. Past it, the arm locks.
+REACH = (0.27, 0.67)  # m from joint 1's axis
+SIDEWAYS = math.radians(30)  # either side of straight ahead
+# The arm also locks this much clearance short of the walls and of itself,
+# where the library's safety check refuses at 1 cm. The arm then moves itself
+# back, and the real arm refuses a move that *starts* from a refused pose:
+# locking early is what keeps that move legal. The half centimetre between the
+# two is more than a hand moves the arm in one 10 ms sample.
+SWING_MARGIN = 0.015  # m
+_SWING_GUARD = []
 CONTROLS = __doc__[__doc__.index("    w / s"):__doc__.index("The four tip")].rstrip()
 
 
@@ -132,15 +140,18 @@ def jog(arm, ik, start, status=None):
                     print(f"\n[jog] can't go there: {err}")
 
 
-def out_of_reach(arm, model, q):
+def out_of_reach(model, q):
     """Why the marker shouldn't be where `q` puts it, or None."""
     tip = model.tip(q)
     r, heading = math.hypot(tip[0], tip[1]), math.atan2(tip[1], tip[0])
     if not REACH[0] <= r <= REACH[1] or abs(heading) > SIDEWAYS:
         return (f"the marker is {r * 100:.0f} cm out and {math.degrees(heading):+.0f} deg "
                 "round from straight ahead, outside where the arm can draw")
-    violation = arm.check_safety(q)
-    return None if violation is None else str(violation)
+    if not _SWING_GUARD:
+        from xarm7_lib import SafetyGuard
+        _SWING_GUARD.append(SafetyGuard(margin=SWING_MARGIN))
+    violation = _SWING_GUARD[0].check(q)
+    return None if violation is None else f"the arm is getting close to a limit ({violation})"
 
 
 def swing_over(arm, model, label):
@@ -162,7 +173,7 @@ def swing_over(arm, model, label):
 
         def on_sample(t, q):
             nonlocal last_good
-            why = out_of_reach(arm, model, q)
+            why = out_of_reach(model, q)
             if why is not None:
                 locked.append(why)
                 return True  # ends the free drive: the arm holds where it is
@@ -174,7 +185,13 @@ def swing_over(arm, model, label):
         if locked:
             print(f"[calibrate] locked: {locked[0]}.")
             da.hands_clear("putting the arm back where the marker was last in reach")
-            arm.set_joint_targets(last_good, speed=0.2)
+            try:
+                arm.set_joint_targets(last_good, speed=0.2)
+            except ValueError as err:  # SafetyError is one
+                raise SystemExit(
+                    f"[calibrate] the arm can't move back on its own ({err}). Push it "
+                    "back over the table with `python -m xarm7_lib.free_drive`, then "
+                    "run calibrate.py again.")
             continue
         if run.reason != "stopped by the caller" or not recent:
             raise SystemExit(f"[calibrate] free drive ended ({run.reason}); nothing saved.")

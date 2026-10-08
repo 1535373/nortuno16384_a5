@@ -22,7 +22,9 @@ drive a MuJoCo simulation, shown in your browser; with it set, the real arm.
 
 ## Files
 
-- `robot.py`: **paste in your Assignment 4 `Robot`** (FK, Jacobians, IK).
+- `robot.py`: **copy your Assignment 4 `robot.py` over this one**, whole and
+  unchanged: `cp ../../Assignment4/ex2/robot.py robot.py` (ex1, ex2 and ex3
+  hold the same class; take the one with your IK in it).
 - `plane.py`: **you edit and submit this.** The paper frame from four corners.
 - `check_plane.py`: checks your `plane.py`. Run it before going to the robot.
 - `calibrate.py`: touch the four corners (the simulator does it for you).
@@ -43,7 +45,8 @@ python sketch.py strokes/rkd.json        # draw R, K and D
 python draw.py strokes/rkd.json          # -> results/rkd-sim.png
 ```
 
-Then in lab, with `ROBOT_IP` set:
+Then in lab, with `ROBOT_IP` set (the sheet is already taped down, about 50 cm
+straight out from the base; leave it there):
 
 ```bash
 python check_plane.py
@@ -100,4 +103,10 @@ The constants at the top of `drawing_arm.py` are the ones to check at a
 station. `MARKER_LENGTH` (flange face to marker tip) only needs to be roughly
 right, within a centimetre or two: calibration cancels the rest, and the
 simulator's own marker is 18 mm longer and 5 mm off-axis to prove it. The
-holder has to give at least `PRESS` (1 mm).
+holder has to give at least `PRESS` (1 mm), and the marker must stick out less
+than about 16 cm, since the flange is 17 cm over the table in the home pose.
+
+Tape a US-letter sheet in landscape, centred 50 cm straight out from the base
+(edges 39 and 61 cm out), where the simulator's sheet is. From there every
+corner can be reached from the home pose and in the drawing pose; much nearer
+the base, the near corners can't be reached from the home pose.

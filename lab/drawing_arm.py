@@ -84,10 +84,13 @@ IK_MAX_CALLS = 60
 READY_Q = np.array([0.0, -0.0051, 0.0, 0.7604, 0.0, 0.7656, 0.0])
 
 # The sheet the simulator pretends is on the table. It is a US-letter sheet in
-# landscape, 42 cm in front of the base, turned 3 degrees and tilted slightly,
-# so a calibration that assumes the paper is square to the robot shows it.
+# landscape, centred 50 cm straight out from the base (its edges 39 and 61 cm
+# out), turned 3 degrees and tilted slightly, so a calibration that assumes the
+# paper is square to the robot shows it. That is where the real sheets go too:
+# from there every corner can be reached both from the home pose (where the
+# marker is swung over the corners) and in the drawing pose.
 SIM_PAPER_SIZE = (0.279, 0.216)
-SIM_PAPER_CENTER = (0.42, 0.0, 0.004)
+SIM_PAPER_CENTER = (0.50, 0.0, 0.004)
 SIM_PAPER_YAW = math.radians(3.0)
 SIM_PAPER_TILT = (math.radians(0.8), math.radians(-0.5))  # about x, about y
 SIM_TOUCH_NOISE = 0.0015  # m, how far off each simulated corner touch lands
@@ -675,18 +678,29 @@ def hands_clear(message="the arm is about to move"):
 
 
 def stream(arm, plan, on_tick=None):
-    """Play a plan already started at plan.q[0]; returns the measured joints."""
+    """Play a plan already started at plan.q[0]; returns the measured joints.
+
+    One setpoint per 1/RATE tick, never faster. The real controller applies
+    each setpoint at its next control tick, so setpoints sent in a burst land
+    as one jump, and it faults on a jump. So the first one (where the arm
+    already is) goes out before the clock starts: switching the controller
+    into servo mode takes it a moment. And a loop that falls behind slips its
+    schedule rather than catching up.
+    """
     measured = np.zeros_like(plan.q)
+    arm.servo_joints(plan.q[0])
     measured[0] = arm.joint_values
     period = 1.0 / RATE
     next_tick = time.perf_counter()
     for k in range(1, len(plan.q)):
+        next_tick += period
+        time.sleep(max(0.0, next_tick - time.perf_counter()))
         arm.servo_joints(plan.q[k])
         measured[k] = arm.joint_values
         if on_tick is not None:
             on_tick(k, measured[k])
-        next_tick += period
-        time.sleep(max(0.0, next_tick - time.perf_counter()))
+        if time.perf_counter() - next_tick > period:
+            next_tick = time.perf_counter()
     return measured
 
 
