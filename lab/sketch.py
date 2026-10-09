@@ -209,7 +209,7 @@ def main():
         raise SystemExit(f"no such file: {path}")
     if not args.show:
         print(CONTROLS)
-    Sketch(path, (width, height), source, editable=not args.show)
+    sketch = Sketch(path, (width, height), source, editable=not args.show)  
     plt.show()
 
 
