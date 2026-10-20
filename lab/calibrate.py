@@ -1,8 +1,8 @@
 """Find the paper: touch the marker to its four corners.  Provided.
 
     python calibrate.py              # simulator: it touches the corners itself
-    python calibrate.py --manual     # simulator: you jog it, as on the real arm
-    ROBOT_IP=... python calibrate.py # the real arm: you jog it
+    python calibrate.py --manual     # simulator: you jog it with the keys below
+    ROBOT_IP=... python calibrate.py # the real arm: you move it by hand
 
 Corner order, as you stand in front of the robot:
 
@@ -10,26 +10,34 @@ Corner order, as you stand in front of the robot:
         |             |
         1 ----------- 2        you
 
-Every touch is made with the marker pointing straight down and the tool not
-turned, exactly as it will be while drawing. That is what makes the result
-independent of the marker: wherever its real tip sits on the flange, it sits
-there the same way at every corner and at every point of the drawing, so the
-offset cancels (see the top of drawing_arm.py). It is also why you don't push
-the marker onto the corners by hand: a hand would hold it at a different angle
-each time.
+On the real arm any order round the sheet works: the corners are put in this
+order for you, with corner 1 to 2 along the sheet's long edge.
 
-On the real arm:
-  1. The arm goes to the home pose of the Assignment 3 lab: marker down, a few
-     centimetres over the table, with joints 1, 4 and 7 turning about vertical
-     axes. For each corner in turn, swing the arm by hand until the marker is
-     over the corner (or as near as it will go), and press enter. Only those
-     three joints are free; the others are watched, and if one is pushed out
-     of place, or the marker leaves the area the arm can draw on, the arm
-     locks where it is until you say to carry on.
-  2. The arm moves to its drawing pose, above corner 1.
-  3. For each corner, jog the marker with the keys below until the tip just
-     touches the corner, and press enter. Come down the last few millimetres
-     in 0.5 mm steps.
+Every touch is made with the marker upright and the tool turned as it will be
+while drawing. That is what makes the result independent of the marker:
+wherever its real tip sits on the flange, it sits there the same way at every
+corner and at every point of the drawing, so the offset cancels (see the top
+of drawing_arm.py). So keep the marker upright when you touch a corner; the
+script says how far it leant at each one.
+
+On the real arm (the controller's own safety fence is off while this runs,
+and back on when it ends; the library's safety box stays on):
+  0. Before the arm moves, the gripper opens. Put the marker in, tip down,
+     press enter, hold it until the fingers close on it, and let go.
+     (Calibrating again with the marker still in? `--keep-marker` skips this.
+     Put a marker in afresh, and calibrate afresh: it won't sit exactly as the
+     last one did.)
+  1. The arm goes to the home pose of the Assignment 3 lab, and every joint
+     is let go. For each corner in turn, bring the marker over the corner,
+     down to a centimetre or two above it, and press enter. If the marker
+     leaves the area the arm can draw on, the arm locks where it is until you
+     say to carry on.
+  2. For each corner, the arm puts the marker upright a little over it, and
+     lets go again. Put the tip on the corner, keeping the marker upright,
+     and press enter. The arm then takes it to the next corner, never lower
+     than the paper.
+
+In the simulator's --manual mode, step 2 is done with the keyboard instead:
 
     w / s   away from you / towards you      a / d   left / right
     r / f   raise / lower                    1 2 3   steps of 0.5, 2, 10 mm
@@ -49,7 +57,7 @@ import termios
 import tty
 
 import numpy as np
-from xarm7_lib import FREE_JOINTS, HOME_POSE
+from xarm7_lib import HOME_POSE
 
 import drawing_arm as da
 import plane
@@ -66,6 +74,24 @@ CORNER_NAMES = {
 MOVES = {"w": (-1, 0, 0), "s": (1, 0, 0), "a": (0, -1, 0), "d": (0, 1, 0),
          "r": (0, 0, 1), "f": (0, 0, -1)}
 STEPS = {"1": 0.0005, "2": 0.002, "3": 0.010}
+
+# The joints free in the home pose, 0-indexed. Joints 1, 4 and 7 are the
+# Assignment 3 lab's, turning about vertical axes, so the marker moves in a
+# horizontal plane. But every pose with those three vertical and the marker
+# down has the flange 17 cm up, too high for a short marker to reach the
+# paper, so in the swing every joint is free: take the marker wherever it has
+# to go. The library won't free all seven (it wants one to watch), so joint 7
+# is "watched" with a drift allowance it can never reach. Its safety guard
+# still stops the arm on a self-collision or the safety box. Joints other than
+# 1, 4 and 7 hold up weight; the controller's teaching mode carries it, using
+# the payload it is set to. Lab staff: set that to the gripper and marker, or
+# the arm sags in your hand.
+SWING_FREE = (0, 1, 2, 3, 4, 5)
+SWING_TOLERANCE = 100.0  # rad, for joint 7: never reached
+# The jog starts this far over where the marker was left over corner 1. It was
+# held at some angle then, and the tool offset that calibration cancels in the
+# drawing pose doesn't cancel across a tilt: three centimetres covers it.
+SWING_ABOVE = 0.03  # m
 
 # Where the marker may be swung in the home pose: around the part of the table
 # the drawing pose can reach, with a few centimetres' slack, since jogging
@@ -154,18 +180,24 @@ def out_of_reach(model, q):
     return None if violation is None else f"the arm is getting close to a limit ({violation})"
 
 
-def swing_over(arm, model, label):
-    """Free drive in the home pose until enter; returns the marker tip then.
+SWING_PROMPT = ("swing the marker over it, push it down to a centimetre or two above "
+                "it, and press enter.")
+TOUCH_PROMPT = ("put the marker's tip on it, keeping the marker upright as it is now, "
+                "and press enter.")
+TILT_WARNING = 5.0  # deg the marker may lean at a touch before we say so
 
-    Joints 1, 4 and 7 are free, as in the Assignment 3 lab; the library
-    watches the others, and if one drifts it locks the arm, asks for hands
-    off and puts the joint back. Taking the marker out of reach does the same:
+
+def swing_over(arm, model, label, prompt=SWING_PROMPT):
+    """Free drive until enter; returns the marker tip then, and the joints.
+
+    Every joint is free (see SWING_FREE). Taking the marker out of reach, or
+    the arm into the library's safety guard, locks the arm:
     the arm locks, and once hands are off it goes back to the last place the
     marker was in reach.
     """
     last_good = arm.joint_values
     while True:
-        print(f"\n[calibrate] {label}: swing the marker over it and press enter.")
+        print(f"\n[calibrate] {label}: {prompt}")
         recent = collections.deque(maxlen=20)
         locked = []
         if sys.stdin.isatty():
@@ -181,11 +213,13 @@ def swing_over(arm, model, label):
             recent.append(last_good)
             return bool(select.select([sys.stdin], [], [], 0)[0])
 
-        run = arm.free_drive(FREE_JOINTS, duration=math.inf, on_sample=on_sample)
+        run = arm.free_drive(SWING_FREE, duration=math.inf, tolerance=SWING_TOLERANCE,
+                             on_sample=on_sample)
         if locked:
             print(f"[calibrate] locked: {locked[0]}.")
             da.hands_clear("putting the arm back where the marker was last in reach")
             try:
+                da.settle(arm)
                 arm.set_joint_targets(last_good, speed=0.2)
             except ValueError as err:  # SafetyError is one
                 raise SystemExit(
@@ -196,7 +230,37 @@ def swing_over(arm, model, label):
         if run.reason != "stopped by the caller" or not recent:
             raise SystemExit(f"[calibrate] free drive ended ({run.reason}); nothing saved.")
         sys.stdin.readline()
-        return np.median([model.tip(q) for q in recent], axis=0)
+        return np.median([model.tip(q) for q in recent], axis=0), recent[-1]
+
+
+def touch_by_hand(arm, ik, model, rough, height):
+    """At each corner: the arm puts the marker upright over it, then you put
+    the tip on it in free drive. Returns the four touched tips.
+
+    Moves between corners never take the marker lower than it has already
+    been put by hand: the swing's lowest point at first, then the paper.
+    """
+    floor, clearance = min(p[2] for p in rough), 0.0
+    corners = []
+    for i, near in enumerate(rough, start=1):
+        q = ik.solve([near[0], near[1], height], da.PEN_DIR, da.READY_Q)
+        low = floor
+        da.move_safely(arm, model, q, f"moving the marker upright over {CORNER_NAMES[i]}",
+                       height=lambda tip: tip[2] - low, clearance=clearance)
+        tip, q_touch = swing_over(arm, model, CORNER_NAMES[i], TOUCH_PROMPT)
+        axis = model.pen_axis(q_touch)
+        tilt = math.degrees(math.acos(max(-1.0, min(1.0, float(axis @ da.PEN_DIR)))))
+        print(f"[calibrate] corner {i} at {np.round(tip, 4)} m, marker {tilt:.1f} deg "
+              "from upright")
+        if tilt > TILT_WARNING:
+            print(f"[calibrate] that is more than {TILT_WARNING:.0f} deg: the touch is off "
+                  "by up to a few mm. Consider running this again, marker upright.")
+        corners.append(tip)
+        # Now the paper's height is known: the next corner starts 2 cm over
+        # it, and nothing on the way goes within 1 cm of it.
+        floor, clearance = tip[2], 0.01
+        height = tip[2] + 0.02
+    return np.array(corners), floor
 
 
 def touch_corners(arm, ik, model, rough, height, status=None):
@@ -216,28 +280,92 @@ def touch_corners(arm, ik, model, rough, height, status=None):
     return np.array(corners)
 
 
-def to_drawing_pose(arm, ik, model, point):
-    """From wherever the arm is to the drawing pose with the tip at `point`."""
+def to_drawing_pose(arm, ik, model, point, rough):
+    """From wherever the arm is to the drawing pose with the tip at `point`.
+
+    The marker's real length is unknown until the corners are touched, so the
+    table's height in these coordinates is too. What is known is where the
+    marker was put by hand, over the paper: the move never takes it any lower
+    than the lowest of those.
+    """
+    floor = min(p[2] for p in rough)
     q = ik.solve(point, da.PEN_DIR, da.READY_Q)
-    da.move_safely(arm, model, q, "moving to the drawing pose, marker down")
+    da.move_safely(arm, model, q, "moving to the drawing pose, marker down",
+                   height=lambda tip: tip[2] - floor, clearance=0.0)
 
 
-def calibrate_real(model, ik):
+def jog_height(rough):
+    """Where the jog starts over corner 1: a little over where the marker was
+    left there by hand."""
+    return rough[0][2] + SWING_ABOVE
+
+
+def fence(arm, on):
+    """Turn the controller's own safety fence (its TCP boundary) on or off.
+
+    The station's fence stops the flange at x = 600 mm, short of the sheet's
+    near edge with the marker straight down, so it is off while calibrating.
+    The library's safety box and self-collision checks stay on throughout.
+    """
+    code = arm.arm.set_fence_mode(on)
+    if isinstance(code, (list, tuple)):  # this SDK returns [code]
+        code = code[0]
+    # Read it back. The reduced states are [reduced mode, TCP boundary, TCP
+    # speed, joint speed, joint ranges, fence, collision rebound].
+    _, states = arm.arm.get_reduced_states()
+    if code != 0 or bool(states[5]) != bool(on):
+        raise SystemExit(f"[calibrate] could not turn the controller's fence "
+                         f"{'on' if on else 'off'} (code {code}, fence reads {states[5]})")
+    print(f"[calibrate] controller safety fence {'back on' if on else 'off'}")
+
+
+def anticlockwise(corners):
+    """The corners in plane.py's order: anticlockwise seen from above, so the
+    diagonals' cross product points up. Touched the other way round (standing
+    on another side of the table, say), they are turned round, 1 kept first."""
+    corners = np.asarray(corners, dtype=float)
+    if np.cross(corners[2] - corners[0], corners[3] - corners[1])[2] < 0:
+        print("[calibrate] the corners went round clockwise seen from above; taking "
+              "them in the other order (1, 4, 3, 2), so the sheet's x axis runs from "
+              "the first corner to the last one you touched")
+        corners = corners[[0, 3, 2, 1]]
+    # Landscape, as the strokes are drawn: x (corner 1 to 2) along the long edge.
+    if np.linalg.norm(corners[1] - corners[0]) < np.linalg.norm(corners[3] - corners[0]):
+        print("[calibrate] starting from the next corner round, so the sheet's x axis "
+              "runs along its long edge")
+        corners = corners[[3, 0, 1, 2]]
+    return corners
+
+
+def calibrate_real(model, ik, keep_marker):
     arm = da.open_arm()
     try:
+        fence(arm, False)
+        # The marker goes in first, wherever the arm is (the home pose, as the
+        # last lab left it), before anything moves.
+        if keep_marker:
+            da.check_marker(arm)
+        else:
+            da.load_marker(arm)
         da.move_safely(arm, model, np.array(HOME_POSE),
                        "moving to the home pose, as in the Assignment 3 lab")
-        rough = [swing_over(arm, model, CORNER_NAMES[i]) for i in (1, 2, 3, 4)]
-        start = rough[0][2]  # the home pose's marker height, over the paper
-        to_drawing_pose(arm, ik, model, [rough[0][0], rough[0][1], start])
-        corners = touch_corners(arm, ik, model, rough, start)
+        rough = [swing_over(arm, model, CORNER_NAMES[i])[0] for i in (1, 2, 3, 4)]
+        corners, paper = touch_by_hand(arm, ik, model, rough, jog_height(rough))
+        last = corners[-1]
+        corners = anticlockwise(corners)
 
-        report(corners, "your sheet")
+        # Saved before the checks, so a frame plane.py gets wrong doesn't cost
+        # the touches; draw.py checks the frame again before it moves.
         da.save_calibration(da.calibration_path(True), corners, "robot")
         print(f"[calibrate] saved {da.calibration_path(True).name}")
-        ik.move_to(arm, corners[-1] + [0.0, 0.0, 0.05])
+        report(corners, "your sheet")
+        # Up off the last corner, upright, never lower than the paper.
+        q = ik.solve(last + [0.0, 0.0, 0.05], da.PEN_DIR, da.READY_Q)
+        da.move_safely(arm, model, q, "lifting the marker off the paper",
+                       height=lambda tip: tip[2] - paper, clearance=0.0)
     finally:
         arm.stop()
+        fence(arm, True)
         arm.close()
 
 
@@ -288,13 +416,15 @@ def sim_by_hand(arm, ik, model, scene, truth):
 
     There is nothing to push in the simulator, so the home-pose step is
     stood in for: the arm goes to the home pose, and the "swung" positions
-    are the corners give or take a couple of centimetres. From there it is the
-    real arm's procedure: the move to the drawing pose, then your jogging.
+    are the corners give or take a couple of centimetres, with the real tip a
+    centimetre or two over the paper. From there it is the real arm's
+    procedure: down to the drawing pose, then your jogging.
     """
     da.move_safely(arm, model, np.array(HOME_POSE), "moving to the home pose")
-    home_height = model.tip(arm.joint_values)[2]
+    offset = da.sim_marker_offset(model)
     rng = np.random.default_rng()
-    rough = [c + np.append(rng.uniform(-0.02, 0.02, 2), 0.0) for c in da.sim_paper_corners()]
+    rough = [c + np.append(rng.uniform(-0.02, 0.02, 2), rng.uniform(0.01, 0.02)) - offset
+             for c in da.sim_paper_corners()]
     print("[calibrate] (on the real arm you would now swing the marker over each "
           "corner by hand)")
 
@@ -305,8 +435,9 @@ def sim_by_hand(arm, ik, model, scene, truth):
         return (f"  real tip {height * 1000:+5.1f} mm off the paper"
                 + ("  (touching)" if height <= 0.0005 else ""))
 
-    to_drawing_pose(arm, ik, model, [rough[0][0], rough[0][1], home_height])
-    return touch_corners(arm, ik, model, rough, home_height, status)
+    start = jog_height(rough)
+    to_drawing_pose(arm, ik, model, [rough[0][0], rough[0][1], start], rough)
+    return touch_corners(arm, ik, model, rough, start, status)
 
 
 def main():
@@ -314,11 +445,14 @@ def main():
     parser.add_argument("--manual", action="store_true",
                         help="in the simulator, jog to the corners yourself "
                              "(practice for the real arm)")
+    parser.add_argument("--keep-marker", action="store_true",
+                        help="on the real arm, calibrate with the marker already in the "
+                             "gripper instead of opening it to put one in")
     args = parser.parse_args()
     model = da.ArmModel()
     ik = da.PenIK(model, da.load_robot_class())
     if da.is_real():
-        calibrate_real(model, ik)
+        calibrate_real(model, ik, args.keep_marker)
     else:
         calibrate_sim(model, ik, args.manual)
 

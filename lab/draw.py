@@ -73,6 +73,9 @@ def main():
     parser.add_argument("--plan-only", action="store_true",
                         help="plan the drawing and plot it, without moving the arm")
     parser.add_argument("--no-show", action="store_true", help="save the plot, don't open it")
+    parser.add_argument("--full-ik", action="store_true",
+                        help="plan with the 7-joint IK in the simulator too (the real arm "
+                             "always uses it)")
     args = parser.parse_args()
 
     real = da.is_real()
@@ -87,11 +90,15 @@ def main():
     da.check_strokes(strokes, size)
 
     model = da.ArmModel()
-    ik = da.PenIK(model, da.load_robot_class())
+    # The real arm draws with our 7-joint IK, which can leave the plane where
+    # the real sheet is beyond the planar chain; the simulator with yours.
+    ik = da.FullIK(model) if real or args.full_ik else da.PenIK(model, da.load_robot_class())
     started = time.perf_counter()
     plan = da.plan_drawing(strokes, plane, H, ik, da.READY_Q)
     print(f"[plan] {len(strokes)} strokes, {plan.duration:.0f} s on the arm "
-          f"(your IK was called {ik.calls} times in {time.perf_counter() - started:.0f} s)")
+          f"({type(ik).__name__} called {ik.calls} times in "
+          f"{time.perf_counter() - started:.0f} s; joints 3 and 5 up to "
+          f"{np.degrees(np.abs(plan.q[:, [2, 4]]).max()):.1f} deg off the plane)")
     da.check_plan(plan)
 
     RESULTS.mkdir(exist_ok=True)
@@ -108,6 +115,8 @@ def main():
 
     arm = da.open_arm(da.READY_Q)
     try:
+        if real:
+            da.check_marker(arm)
         scene = None
         if not real:
             scene = da.SimScene(arm, model, H_cal=H)
