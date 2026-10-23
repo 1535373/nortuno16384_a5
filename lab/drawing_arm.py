@@ -433,13 +433,15 @@ def load_robot_class():
 # ----------------------------------------------------------------------
 
 
-def save_calibration(path, corners, source, sim_marker_offset=None):
+def save_calibration(path, corners, source, sim_marker_offset=None, **record):
     data = {
         "corners": np.asarray(corners, dtype=float).tolist(),
         "source": source,
         "marker_length": MARKER_LENGTH,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    # Anything else is kept for the record (calibrate.py's touches, say).
+    data.update({k: np.asarray(v, dtype=float).tolist() for k, v in record.items()})
     if sim_marker_offset is not None:
         # Only the simulator knows where its marker really is.
         data["sim_marker_offset"] = np.asarray(sim_marker_offset, dtype=float).tolist()

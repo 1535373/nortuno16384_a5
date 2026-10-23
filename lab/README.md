@@ -93,8 +93,11 @@ back on when it ends; the library's safety box stays on throughout.
 
 The marker is upright at every touch and at every point of the drawing, so
 where its tip really sits on the flange doesn't matter: the offset is the same
-everywhere and cancels. That is why the marker has to be upright when you
-touch a corner.
+everywhere and cancels. That is why the marker should be upright when you
+touch a corner. A touch that leans anyway is allowed for: from the arm's
+joints at the four touches, calibrate.py works out where the marker's tip
+really is on the flange (the four tips have to make a rectangle), and it
+reports that and how far it moved the corners.
 
 On the real arm, `draw.py` solves the drawing with a 7-joint IK of ours rather
 than your planar one: the real sheet can sit lower than the planar chain

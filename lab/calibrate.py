@@ -18,7 +18,10 @@ while drawing. That is what makes the result independent of the marker:
 wherever its real tip sits on the flange, it sits there the same way at every
 corner and at every point of the drawing, so the offset cancels (see the top
 of drawing_arm.py). So keep the marker upright when you touch a corner; the
-script says how far it leant at each one.
+script says how far it leant at each one. On the real arm, a touch that leans
+anyway is allowed for: the arm's joints at the four touches say, by forward
+kinematics, where on the flange the tip has to be for them to make a
+rectangle, and the corners are worked out with that (see `fit_tip`).
 
 On the real arm (the controller's own safety fence is off while this runs,
 and back on when it ends; the library's safety box stays on):
@@ -237,7 +240,7 @@ def swing_over(arm, model, label, prompt=SWING_PROMPT, height=None):
                              "where you left off.")
         if not locked and reason == "stopped by the caller" and recent:
             sys.stdin.readline()
-            return np.median([model.tip(q) for q in recent], axis=0), recent[-1]
+            return np.median([model.tip(q) for q in recent], axis=0), np.median(recent, axis=0)
 
         print(f"[calibrate] free drive stopped: {locked[0] if locked else reason}")
         da.clear_faults(arm)
@@ -248,17 +251,18 @@ def swing_over(arm, model, label, prompt=SWING_PROMPT, height=None):
             print("[calibrate] the arm is still in reach; carrying on from where it is")
 
 
-def touch_by_hand(arm, ik, model, rough, corners=(), save=None):
+def touch_by_hand(arm, ik, model, rough, corners=(), joints=(), save=None):
     """At each corner: the arm puts the marker upright over it, then you put
-    the tip on it in free drive. Returns the four touched tips, and the paper's
-    height.
+    the tip on it in free drive. Returns the four touched tips (by
+    MARKER_LENGTH), the paper's height, and the joints at each touch.
 
-    `corners` are the ones already touched, by a run that was stopped; `save`
-    is called with the list after every touch. Moves between corners never
+    `corners` and `joints` are the ones already touched, by a run that was
+    stopped; `save` is called with both lists after every touch. Moves between corners never
     take the marker lower than it has already been put by hand: the swing's
     lowest point at first, then the paper.
     """
     corners = [np.asarray(c, dtype=float) for c in corners]
+    joints = [np.asarray(q, dtype=float) for q in joints]
     if corners:
         floor, clearance, height = corners[-1][2], 0.01, corners[-1][2] + 0.02
     else:
@@ -280,13 +284,51 @@ def touch_by_hand(arm, ik, model, rough, corners=(), save=None):
             print(f"[calibrate] that is more than {TILT_WARNING:.0f} deg: the touch is off "
                   "by up to a few mm. Consider running this again, marker upright.")
         corners.append(tip)
+        joints.append(q_touch)
         if save is not None:
-            save(corners)
+            save(corners, joints)
         # Now the paper's height is known: the next corner starts 2 cm over
         # it, and nothing on the way goes within 1 cm of it.
         floor, clearance = tip[2], 0.01
         height = tip[2] + 0.02
-    return np.array(corners), floor
+    return np.array(corners), floor, np.array(joints)
+
+
+# The marker's tip is wherever the gripper happened to take hold of it, not
+# MARKER_LENGTH along the flange's axis. That is cancelled exactly when every
+# touch holds the tool as the drawing does; a touch that leans by an angle is
+# off by the angle times how far out MARKER_LENGTH is (8 cm out and 10 deg is
+# 14 mm). So the tip is solved from the touches themselves: by forward
+# kinematics, the four real tips have to make a rectangle, and the tip on the
+# flange that does that is the marker's. Where the touches all lean alike they
+# can't tell, and the solve keeps to MARKER_LENGTH, which is then near enough.
+TIP_PRIOR = 0.02  # weight on staying at MARKER_LENGTH, against the corners' misfit
+TIP_LENGTH = (0.05, 0.35)  # m out from the flange, for a marker to be believed
+
+
+def fit_tip(model, joints):
+    """The marker's tip in the flange's frame that makes the four touches
+    (joints, in order round the sheet) a rectangle."""
+    from scipy.optimize import least_squares
+    poses = [model.flange(q) for q in joints]
+    nominal = np.array([0.0, 0.0, model.marker_length])
+
+    def misfit(d):
+        c = np.array([p + R @ d for p, R in poses])
+        u, v = c[1] - c[0], c[3] - c[0]
+        square = (u @ v) / math.sqrt(np.linalg.norm(u) * np.linalg.norm(v))  # m
+        return np.concatenate([c[0] - c[1] + c[2] - c[3], [square], TIP_PRIOR * (d - nominal)])
+
+    return least_squares(misfit, nominal).x
+
+
+def drawing_corners(model, joints, tip):
+    """The touched corners, in the coordinates the drawing is planned in: where
+    `model.tip` puts the real tip with the tool held as for drawing (R0), which
+    is R0 (tip - MARKER_LENGTH z) short of it."""
+    R0 = model.flange(da.READY_Q)[1]
+    shift = R0 @ (tip - [0.0, 0.0, model.marker_length])
+    return np.array([p + R @ tip - shift for p, R in (model.flange(q) for q in joints)])
 
 
 def touch_corners(arm, ik, model, rough, height, status=None):
@@ -327,9 +369,16 @@ def jog_height(rough):
 
 
 def anticlockwise(corners):
-    """The corners in plane.py's order: anticlockwise seen from above, so the
-    diagonals' cross product points up. Touched the other way round (standing
-    on another side of the table, say), they are turned round, 1 kept first."""
+    """`corners` in order round the sheet; see `round_the_sheet`."""
+    corners = np.asarray(corners, dtype=float)
+    return corners[round_the_sheet(corners)]
+
+
+def round_the_sheet(corners):
+    """The order to take the touches in for plane.py: anticlockwise seen from
+    above, so the diagonals' cross product points up. Touched the other way
+    round (standing on another side of the table, say), they are turned round,
+    1 kept first."""
     corners = np.asarray(corners, dtype=float)
     # Round the sheet anticlockwise seen from above, by each corner's bearing
     # from the middle of the sheet, starting from the first one touched. That
@@ -345,30 +394,35 @@ def anticlockwise(corners):
     if np.linalg.norm(corners[1] - corners[0]) < np.linalg.norm(corners[3] - corners[0]):
         print("[calibrate] starting from the next corner round, so the sheet's x axis "
               "runs along its long edge")
-        corners = corners[[3, 0, 1, 2]]
-    return corners
+        order = [order[k] for k in (3, 0, 1, 2)]
+    return order
 
 
 def load_progress():
     """What a stopped run got done: the swung positions and the touched corners."""
     try:
         data = json.loads(PROGRESS.read_text())
-        return [np.array(p) for p in data["rough"]], [np.array(c) for c in data["corners"]]
+        corners, joints = data["corners"], data.get("joints", [])
+        if len(joints) != len(corners):  # from before the joints were kept
+            corners, joints = [], []
+        return ([np.array(p) for p in data["rough"]], [np.array(c) for c in corners],
+                [np.array(q) for q in joints])
     except (OSError, ValueError, KeyError):
-        return [], []
+        return [], [], []
 
 
-def save_progress(rough, corners):
+def save_progress(rough, corners=(), joints=()):
     PROGRESS.write_text(json.dumps({
         "rough": [np.asarray(p).tolist() for p in rough],
-        "corners": [np.asarray(c).tolist() for c in corners]}, indent=1))
+        "corners": [np.asarray(c).tolist() for c in corners],
+        "joints": [np.asarray(q).tolist() for q in joints]}, indent=1))
 
 
 def resume(keep_marker):
     """The progress to pick up from, if there is any and the person says so."""
-    rough, corners = load_progress()
+    rough, corners, joints = load_progress()
     if not rough:
-        return [], []
+        return [], [], []
     done = (f"{len(corners)} of 4 corners touched" if corners
             else f"the marker swung over {len(rough)} of 4 corners")
     print(f"[calibrate] the last run stopped with {done}.")
@@ -378,9 +432,9 @@ def resume(keep_marker):
         answer = input("[calibrate] pick up from there? Only if the marker hasn't been "
                        "taken out or moved in the gripper since. [Y/n] ").strip().lower()
     if answer in ("", "y", "yes"):
-        return rough, corners
+        return rough, corners, joints
     PROGRESS.unlink(missing_ok=True)
-    return [], []
+    return [], [], []
 
 
 def calibrate_real(model, ik, keep_marker):
@@ -389,7 +443,7 @@ def calibrate_real(model, ik, keep_marker):
     # is dealt with here too, before anything moves.
     arm = da.open_arm(fence=False)
     try:
-        rough, touched = resume(keep_marker)
+        rough, touched, touched_joints = resume(keep_marker)
         # The marker goes in first, wherever the arm is (the home pose, as the
         # last lab left it), before anything moves. Picking up a stopped run
         # needs the same marker, just where it was.
@@ -402,15 +456,30 @@ def calibrate_real(model, ik, keep_marker):
                            "moving to the home pose, as in the Assignment 3 lab")
         for i in range(len(rough) + 1, 5):
             rough.append(swing_over(arm, model, CORNER_NAMES[i])[0])
-            save_progress(rough, [])
-        corners, paper = touch_by_hand(arm, ik, model, rough, touched,
-                                       save=lambda done: save_progress(rough, done))
+            save_progress(rough)
+        corners, paper, joints = touch_by_hand(
+            arm, ik, model, rough, touched, touched_joints,
+            save=lambda done, at: save_progress(rough, done, at))
         last = corners[-1]
-        corners = anticlockwise(corners)
+        order = round_the_sheet(corners)
+        joints = joints[order]
+        tip = fit_tip(model, joints)
+        if TIP_LENGTH[0] <= tip[2] <= TIP_LENGTH[1]:
+            fitted = drawing_corners(model, joints, tip)
+            print(f"[calibrate] the marker's tip, from the touches: {tip[2] * 1000:.0f} mm "
+                  f"out from the flange and {np.linalg.norm(tip[:2]) * 1000:.0f} mm off its "
+                  f"axis; allowing for it moves the corners by up to "
+                  f"{np.max(np.linalg.norm(fitted - corners[order], axis=1)) * 1000:.1f} mm")
+            corners = fitted
+        else:
+            print(f"[calibrate] the touches put the marker's tip {tip[2] * 1000:.0f} mm out "
+                  "from the flange, which can't be right; keeping MARKER_LENGTH's")
+            corners = corners[order]
 
         # Saved before the checks, so a frame plane.py gets wrong doesn't cost
         # the touches; draw.py checks the frame again before it moves.
-        da.save_calibration(da.calibration_path(True), corners, "robot")
+        da.save_calibration(da.calibration_path(True), corners, "robot",
+                            marker_tip=tip, touch_joints=joints)
         PROGRESS.unlink(missing_ok=True)
         print(f"[calibrate] saved {da.calibration_path(True).name}")
         report(corners, "your sheet")
