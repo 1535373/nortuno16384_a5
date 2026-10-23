@@ -123,7 +123,7 @@ def main():
             scene.planned(plan)
         measured = da.run(arm, plan, model, plane, H, scene=scene, label=f"drawing {stem}")
     finally:
-        arm.close()
+        da.close_arm(arm)
 
     tips = model.tips(measured)
     if real:

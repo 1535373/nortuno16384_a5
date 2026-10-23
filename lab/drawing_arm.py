@@ -732,24 +732,48 @@ def settle(arm, timeout=3.0):
         time.sleep(0.1)
 
 
+MOVE_ATTEMPTS = 4  # tries at a move, clearing the controller between them
+
+
 def move_safely(arm, model, q_to, message, height=None, clearance=MOVE_CLEARANCE):
-    """A planned move to q_to, along `route`, after hands are clear."""
-    legs = route(model, arm.joint_values, q_to, height, clearance)
-    if legs is None:
-        raise SystemExit(
-            "[arm] there is no safe way from where the arm is to where it needs to go "
-            "(the marker would come too close to the table or paper). Move it up and "
-            "over the sheet by hand (`python -m xarm7_lib.free_drive`) and try again.")
+    """A planned move to q_to, along `route`, after hands are clear.
+
+    A move the controller cuts short, or faults on, is not the end: the fault
+    is cleared (see `clear_faults`), the arm stepped back inside the guard if
+    it ended up outside it (see `step_inside`), and the move planned again from
+    wherever the arm got to.
+    """
     hands_clear(message)
-    for q in legs:
-        settle(arm)
-        if arm.set_joint_targets(q, speed=MOVE_SPEED):
+    for _ in range(MOVE_ATTEMPTS):
+        legs = route(model, arm.joint_values, q_to, height, clearance)
+        if legs is None:
+            if _guard().check(arm.joint_values) is None:
+                raise SystemExit(
+                    "[arm] there is no safe way from where the arm is to where it needs to "
+                    "go (the marker would come too close to the table or paper). Move it "
+                    "up and over the sheet by hand (`python -m xarm7_lib.free_drive`) and "
+                    "try again.")
+            # Somewhere every move from would be refused: out of there first.
+            step_inside(arm, model, height=height)
             continue
-        # Cut short, most likely by a controller still reporting "stopped":
-        # once it is ready, the same leg again, from wherever the arm got to.
-        settle(arm)
-        if not arm.set_joint_targets(q, speed=MOVE_SPEED):
-            raise SystemExit("[arm] the arm stopped short of the move")
+        try:
+            for q in legs:
+                settle(arm)
+                if not arm.set_joint_targets(q, speed=MOVE_SPEED):
+                    # Cut short, most often by a controller still reporting
+                    # "stopped": planned again from wherever the arm got to.
+                    raise _CutShort()
+            return
+        except _CutShort:
+            if not _faulted(arm):
+                continue
+            print("[arm] the move was cut short")
+        except ARM_ERRORS as err:
+            print(f"[arm] the move was refused: {err}")
+        clear_faults(arm)
+        hands_clear(f"trying again: {message}")
+    raise SystemExit(f"[arm] the arm stopped short of the move {MOVE_ATTEMPTS} times over; "
+                     "nothing more is being tried. Run the script again.")
 
 
 # ----------------------------------------------------------------------
@@ -757,17 +781,287 @@ def move_safely(arm, model, q_to, message, height=None, clearance=MOVE_CLEARANCE
 # ----------------------------------------------------------------------
 
 
-def open_arm(start_q=READY_Q):
-    """The real arm when ROBOT_IP is set, the simulator (in meshcat) otherwise."""
+def open_arm(start_q=READY_Q, fence=None):
+    """The real arm when ROBOT_IP is set, the simulator (in meshcat) otherwise.
+
+    The real arm is taken however it was left: a latched error is cleared, or
+    the person asked to deal with it (an e-stop pressed in), before anything
+    else happens. `fence` turns the controller's own safety fence on or off
+    first, since a fence the arm is already outside of keeps latching an error.
+    """
     if is_real():
-        from xarm7_lib import RealXArm7
-        print(f"[arm] connecting to the xArm7 at {os.environ['ROBOT_IP'].strip()}")
-        return RealXArm7(os.environ["ROBOT_IP"].strip())
+        from xarm.wrapper import XArmAPI
+        from xarm7_lib import RealXArm7, XArmError
+        ip = os.environ["ROBOT_IP"].strip()
+        print(f"[arm] connecting to the xArm7 at {ip}")
+        sdk = XArmAPI(ip, is_radian=True)
+        if not sdk.connected:
+            raise SystemExit(f"[arm] no answer from the controller at {ip}. Is it on, and "
+                             "the ethernet cable in?")
+        # The fence first: an arm already outside it latches an error again
+        # as soon as it is cleared. But a controller holding an error refuses
+        # to change it, so then it is cleared first and the fence tried again.
+        if fence is not None and not _fence(sdk, fence)[0]:
+            clear_faults(sdk)
+            set_fence(sdk, fence)
+        while True:
+            clear_faults(sdk)
+            try:
+                arm = RealXArm7(arm=sdk)
+                break
+            except XArmError as err:
+                print(f"[arm] the controller isn't ready yet: {err}")
+        # Handed the connection, the library leaves it open on close(); it is
+        # this function's to close, so let it go with the arm.
+        arm._owns_arm = True
+        return arm
     from xarm7_lib import SimulatedXArm7
     arm = SimulatedXArm7(visualize=True, q0=start_q)
     if arm.viz is not None:
         print(f"[arm] simulator: {arm.viz.url}")
     return arm
+
+
+def set_fence(sdk, on):
+    """Turn the controller's own safety fence (its TCP boundary) on or off.
+
+    The station's fence stops the flange at x = 600 mm, short of the sheet's
+    near edge with the marker straight down, so calibrate.py turns it off. The
+    library's safety box and self-collision checks stay on throughout.
+    """
+    ok, code, reads = _fence(sdk, on)
+    if not ok:
+        raise SystemExit(f"[arm] could not turn the controller's fence "
+                         f"{'on' if on else 'off'} (code {code}, fence reads {reads})")
+    print(f"[arm] controller safety fence {'on' if on else 'off'}")
+
+
+def _fence(sdk, on):
+    """Set the fence; (whether it took, the SDK's code, what it reads back)."""
+    code = sdk.set_fence_mode(on)
+    if isinstance(code, (list, tuple)):  # this SDK returns [code]
+        code = code[0]
+    # Read it back. The reduced states are [reduced mode, TCP boundary, TCP
+    # speed, joint speed, joint ranges, fence, collision rebound].
+    _, states = sdk.get_reduced_states()
+    return code == 0 and bool(states[5]) == bool(on), code, states[5]
+
+
+def close_arm(arm, fence=None):
+    """Stop the arm, put the fence back as asked, and let go of the connection,
+    each whether or not the one before it worked: this runs on the way out of
+    whatever went wrong."""
+    for step in (arm.stop,
+                 (lambda: set_fence(arm.arm, fence)) if fence is not None else None,
+                 arm.close):
+        if step is None:
+            continue
+        try:
+            step()
+        except (Exception, SystemExit) as err:  # noqa: BLE001
+            print(f"[arm] on the way out: {err}")
+
+
+# ----------------------------------------------------------------------
+# Getting the real arm out of trouble
+# ----------------------------------------------------------------------
+
+# The controller's codes that only a person can clear: an emergency stop.
+ESTOP_ERRORS = (1, 2, 3)
+# A move out of somewhere the guard refuses may start in it, for this far (the
+# largest joint's travel) and no further; past that it must stay clear.
+ESCAPE_SPAN = 0.35  # rad
+ESCAPE_SPEED = 0.2  # rad/s
+ESCAPE_STEP = 0.02  # rad between the samples a way out is checked at
+
+
+class _CutShort(Exception):
+    """A move that ended before the arm got there."""
+
+
+def _arm_errors():
+    from xarm7_lib import SafetyError, XArmError
+    return (SafetyError, XArmError)
+
+
+try:
+    ARM_ERRORS = _arm_errors()
+except ImportError:  # no robot library: nothing will be driven anyway
+    ARM_ERRORS = ()
+
+
+def describe_error(code):
+    """The controller's own words for an error code."""
+    from xarm.core.config.x_code import ControllerErrorCodeMap
+    entry = ControllerErrorCodeMap.get(code, ControllerErrorCodeMap["other"])["en"]
+    return f"C{code}, {entry['title']}" + (f" ({entry['desc']})" if entry["desc"] else "")
+
+
+def _faulted(arm):
+    """Whether the real controller is holding an error. Never in the simulator."""
+    sdk = getattr(arm, "arm", None)
+    return sdk is not None and bool(sdk.error_code)
+
+
+def _clear_once(sdk):
+    """One go at clearing the controller and readying it for position moves.
+    True if it then reports ready."""
+    sdk.clean_warn()
+    sdk.clean_error()
+    sdk.motion_enable(True)
+    sdk.set_mode(0)
+    sdk.set_state(0)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if (sdk.connected and not sdk.error_code and sdk.mode == 0
+                and sdk.state not in _STOPPED_STATES):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def clear_faults(arm):
+    """Get the real controller ready to move again, whatever it has latched.
+
+    Takes a `RealXArm7` or the SDK under one. What clearing fixes (a collision,
+    a fault in teaching mode, a boundary, a move cut short) it fixes; what only
+    a person can (an emergency stop pressed in) it asks for, and waits. Returns
+    once the controller is ready; Ctrl-C gives up. The simulator has nothing to
+    clear.
+    """
+    sdk = getattr(arm, "arm", arm)
+    if not hasattr(sdk, "clean_error"):
+        return
+    code = sdk.error_code
+    if code:
+        print(f"[arm] the controller reports {describe_error(code)}")
+    shown = code
+    while not _clear_once(sdk):
+        code = sdk.error_code
+        if not sdk.connected:
+            raise SystemExit("[arm] the connection to the controller dropped. Check the "
+                             "ethernet cable, then run the script again.")
+        if code != shown:
+            print(f"[arm] the controller reports {describe_error(code)}" if code else
+                  f"[arm] the controller won't get ready (state {sdk.state})")
+            shown = code
+        what = ("release the emergency stop (twist it to pop it out)" if code in ESTOP_ERRORS
+                else "if this keeps happening, power the arm off and on at the control box")
+        input(f"[arm] {what}, then press enter to try again (Ctrl-C to give up): ")
+    if code:
+        print("[arm] cleared; the controller is ready")
+    if sdk is not arm:
+        # Clean already; this brings the library's own idea of the mode up to date.
+        arm.clear_errors()
+
+
+def _escape_ok(model, q_from, q_to, height):
+    """Whether the straight move q_from -> q_to gets the arm out of wherever
+    the guard refuses within ESCAPE_SPAN, and then stays clear, with the marker
+    never lower than both its ends."""
+    guard = _guard()
+    floor = min(height(model.tip(q_from)), height(model.tip(q_to)), MOVE_CLEARANCE) - 1e-3
+    span = float(np.max(np.abs(q_to - q_from)))
+    steps = max(1, int(np.ceil(span / ESCAPE_STEP)))
+    inside = False
+    for k in range(steps + 1):
+        q = q_from + (k / steps) * (q_to - q_from)
+        if height(model.tip(q)) < floor:
+            return False
+        if guard.check(q) is None:
+            inside = True
+        elif inside or k / steps * span > ESCAPE_SPAN:
+            return False
+    return inside
+
+
+def step_inside(arm, model, back_to=(), height=None,
+                message="moving the arm back inside where it may be"):
+    """If the guard refuses where the arm is, move it back inside, on its own.
+
+    The library refuses every move that starts somewhere it may not be, so an
+    arm pushed past the guard's edge (by hand, in free drive) could only be
+    pushed back by hand. This finds a way out instead: to `back_to` (poses the
+    arm has just come from) if a straight move there leaves the guard's edge
+    behind within ESCAPE_SPAN, or else up, by raising joint 2, or to the ready
+    or home pose. Only a move the arm leaves the edge on at once, and that
+    never takes the marker lower, will do. If none will, the arm is let go
+    and locks again the moment it has been pushed back inside.
+    """
+    from xarm7_lib import HOME_POSE
+    height = height or (lambda tip: tip[2])
+    for _ in range(3):
+        q = arm.joint_values
+        if _guard().check(q) is None:
+            return
+        candidates = [np.asarray(p, dtype=float) for p in back_to]
+        candidates += [q - np.eye(7)[1] * lift for lift in (0.15, 0.3, 0.5, HOME_LIFT)]
+        candidates += [READY_Q, np.asarray(HOME_POSE, dtype=float)]
+        target = next((c for c in candidates if _escape_ok(model, q, c, height)), None)
+        if target is None:
+            break
+        print(f"[arm] the arm is past the edge of where it may be ({_guard().check(q)})")
+        hands_clear(message)
+        settle(arm)
+        # `_move_joints` is the library's own way back out (free drive's
+        # retreat uses it): `set_joint_targets` would check the path from where
+        # the arm is, and refuse it for the very reason it is being made.
+        # `_escape_ok` has checked it instead.
+        try:
+            if getattr(arm, "_move_joints", None) is not None:
+                arm._move_joints(target, speed=ESCAPE_SPEED)
+            else:
+                arm.set_joint_targets(target, speed=ESCAPE_SPEED)
+        except ARM_ERRORS as err:
+            print(f"[arm] that move was refused: {err}")
+        clear_faults(arm)
+    if _guard().check(arm.joint_values) is not None:
+        _push_inside(arm)
+
+
+def return_to(arm, model, q_to, message, height=None):
+    """Back to q_to, a pose the arm has just come from, from wherever it is:
+    out from past the guard's edge first if it has to be, then straight there
+    (or along `route` if straight won't do)."""
+    step_inside(arm, model, back_to=[q_to], height=height, message=message)
+    if np.max(np.abs(arm.joint_values - q_to)) < 1e-2:
+        return
+    move_safely(arm, model, q_to, message, height=height, clearance=0.0)
+
+
+def _push_inside(arm):
+    """The last resort: let the arm go, and lock it the moment a person has
+    pushed it back inside the guard."""
+    sdk = getattr(arm, "arm", None)
+    if sdk is None:
+        raise SystemExit("[arm] the arm is somewhere it may not be, and there is no move "
+                         "out of there")
+    print(f"[arm] no move gets the arm out of where it is "
+          f"({_guard().check(arm.joint_values)}) on its own.")
+    input("[arm] the arm is about to be let go: hold it, and press enter: ")
+    sdk.set_mode(2)
+    sdk.set_state(0)
+    print("[arm] push it back towards the middle of its workspace; it locks itself "
+          "as soon as it is back inside.")
+    inside_since = None
+    try:
+        while True:
+            time.sleep(0.01)
+            if sdk.error_code:
+                clear_faults(sdk)
+                sdk.set_mode(2)
+                sdk.set_state(0)
+            if _guard().check(arm.joint_values) is not None:
+                inside_since = None
+            elif inside_since is None:
+                inside_since = time.monotonic()
+            elif time.monotonic() - inside_since > 0.3:
+                break
+    finally:
+        sdk.set_mode(0)
+        sdk.set_state(0)
+        settle(arm)
+    print("[arm] back inside; locked")
 
 
 def hands_clear(message="the arm is about to move"):

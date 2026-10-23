@@ -78,6 +78,14 @@ calibration, so draw after calibrating if your real sheet isn't US letter.
    it suggests calibrating again. The arm then takes the marker to the next
    corner, never lower than the paper.
 
+Nothing that goes wrong ends the run, short of Ctrl-C. A fault the controller
+latches (a bump, the e-stop, "abnormal movement in manual mode") is cleared,
+after it asks you to release the e-stop if that's what it was. An arm pushed
+past the edge of where it may be moves itself back. The script also starts
+from an arm left faulted or out of place. Each step is saved as it is done,
+so a run stopped part-way offers to pick up where it stopped (as long as the
+marker hasn't moved in the gripper).
+
 Any order round the sheet works; the corners are put in order for you, with
 corner 1 to 2 along the long edge. The controller's own safety fence is off
 while calibrating (it stops the flange short of the sheet's near edge) and
