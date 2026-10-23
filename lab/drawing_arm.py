@@ -929,8 +929,10 @@ def clear_faults(arm):
     once the controller is ready; Ctrl-C gives up. The simulator has nothing to
     clear.
     """
-    sdk = getattr(arm, "arm", arm)
-    if not hasattr(sdk, "clean_error"):
+    # The SDK has an `.arm` of its own, so tell the two apart by what they are.
+    wrapped = hasattr(arm, "clear_errors")  # a RealXArm7
+    sdk = arm.arm if wrapped else arm
+    if not hasattr(sdk, "clean_error"):  # the simulator
         return
     code = sdk.error_code
     if code:
@@ -950,7 +952,7 @@ def clear_faults(arm):
         input(f"[arm] {what}, then press enter to try again (Ctrl-C to give up): ")
     if code:
         print("[arm] cleared; the controller is ready")
-    if sdk is not arm:
+    if wrapped:
         # Clean already; this brings the library's own idea of the mode up to date.
         arm.clear_errors()
 
