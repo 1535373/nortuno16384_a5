@@ -1121,6 +1121,20 @@ def load_marker(arm):
         print("[gripper] the fingers closed on nothing; let's try that again.")
 
 
+def unload_marker(arm):
+    """Open the gripper to give the marker back, unless it is staying in for
+    another drawing (which the calibration it was made with still fits)."""
+    answer = input("[gripper] hold the marker and press enter to open the gripper "
+                   "(or type k and enter to keep it in for another drawing): ")
+    if answer.strip().lower().startswith("k"):
+        print("[gripper] the marker stays in")
+        return
+    sdk = _gripper(arm)
+    sdk.set_gripper_position(GRIPPER_OPEN, wait=True, timeout=10)
+    print("[gripper] open; take the marker out. A marker put back in needs "
+          "`python calibrate.py` again.")
+
+
 def check_marker(arm):
     """Stop now if the gripper isn't holding anything. Reads only; nothing moves."""
     position = _gripper_position(arm.arm)

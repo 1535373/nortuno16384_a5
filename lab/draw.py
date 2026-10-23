@@ -122,6 +122,10 @@ def main():
             scene = da.SimScene(arm, model, H_cal=H)
             scene.planned(plan)
         measured = da.run(arm, plan, model, plane, H, scene=scene, label=f"drawing {stem}")
+        if real:
+            # Off the paper first (`run` ends with the pen up, over the last
+            # stroke), then the marker comes out.
+            da.unload_marker(arm)
     finally:
         da.close_arm(arm)
 
