@@ -70,8 +70,22 @@ class Robot:
         # - Remember that the end effector frame does not include an additional rotation.
 
         # Your code starts here
+        def rot(a):
+            c, s = np.cos(a), np.sin(a)
+            return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
 
-        ...
+        def trans(l):
+            return np.array([[1.0, 0.0, l], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+        # Frame 0: base of link 1, rotated by joint 1 (no translation yet)
+        frames[:, :, 0] = rot(thetas[0])
+
+        # Frames 1..n-1: translate along the previous link, then rotate by this joint
+        for i in range(1, n):
+            frames[:, :, i] = frames[:, :, i - 1] @ trans(self.link_lengths[i - 1]) @ rot(thetas[i])
+
+        # End effector: translate along the last link, no extra rotation
+        frames[:, :, n] = frames[:, :, n - 1] @ trans(self.link_lengths[n - 1])
 
         # Your code ends here
         # --------------- END STUDENT SECTION ------------------------------------------------
@@ -132,8 +146,19 @@ class Robot:
         # - Determine the rotational component based on joint contributions.
 
         # Your code starts here
+        # Position rows: central difference, one joint at a time, all frames at once
+        for j in range(self.dof):
+            dq = np.zeros(self.dof)
+            dq[j] = epsilon
+            frames_plus = self.forward_kinematics(thetas + dq)
+            frames_minus = self.forward_kinematics(thetas - dq)
+            jacobians[0, j, :] = (frames_plus[0, 2, :] - frames_minus[0, 2, :]) / (2 * epsilon)
+            jacobians[1, j, :] = (frames_plus[1, 2, :] - frames_minus[1, 2, :]) / (2 * epsilon)
 
-        ...
+        # Rotation row by inspection: frame i turns with joints 0..i,
+        # and the end effector (frame dof) turns with every joint
+        for i in range(self.dof + 1):
+            jacobians[2, :min(i, self.dof - 1) + 1, i] = 1
 
         # Your code ends here
         # --------------- END STUDENT SECTION ----------------------------------------
@@ -185,54 +210,32 @@ class Robot:
 
             if goal_position.shape[0] == 2:  # [x, y] goal
                 # Your code starts here
-
-                cost_gradient = np.zeros(self.dof)
-                # Compute the current end effector position
-                # FK = self.end_effector(thetas)
-                # Compute the difference between current position and goal
-                # d = FK[:2] - goal_position
-                # Compute the Jacobian
-                # J = self.jacobians(thetas)[:, :, -1]
-                # Compute the cost gradient
-                # cost_gradient = ...
-
-                ...
+                FK = self.end_effector(thetas)
+                d = FK[:2] - goal_position
+                J = self.jacobians(thetas)[:, :, -1]
+                cost_gradient = J[:2, :].T @ d
 
                 # Your code ends here
 
             else:  # [x, y, theta] goal
                 # Your code starts here
-
-                cost_gradient = np.zeros(self.dof)
-                # Compute the current end effector pose
-                # FK = self.end_effector(thetas)
-                # Compute the difference between current pose and goal
-                # d = FK - goal_position
-                # Compute the Jacobian
-                # J = self.jacobians(thetas)[:, :, -1]
-                # Compute the cost gradient
-                # cost_gradient = ...
-
-                ...
+                FK = self.end_effector(thetas)
+                d = FK - goal_position
+                J = self.jacobians(thetas)[:, :, -1]
+                cost_gradient = J.T @ d
 
                 # Your code ends here
 
             # Update 'thetas'
             # Your code starts here
-
-            # thetas = thetas - step_size * cost_gradient
-
-            ...
+            thetas = thetas - step_size * cost_gradient
 
             # Your code ends here
 
             # Check stopping condition, and return if it is met.
             # Your code starts here
-
-            # if np.linalg.norm(cost_gradient) < stopping_condition:
-            #     return thetas
-
-            ...
+            if np.linalg.norm(cost_gradient) < stopping_condition:
+                return thetas
 
             # Your code ends here
 

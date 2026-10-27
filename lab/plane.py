@@ -49,7 +49,24 @@ def plane_frame(corners):
     p1, p2, p3, p4 = corners
 
     # TODO: build the paper frame.
+    n = np.cross(p3 - p1, p4 - p2)
+    n = n / np.linalg.norm(n)
+
+    c = corners.mean(axis=0)
+
+    o = p1 - np.dot(p1 - c, n) * n
+
+    e = p2 - p1
+    x_hat = e - np.dot(e, n) * n
+    x_hat = x_hat / np.linalg.norm(x_hat)
+
+    y_hat = np.cross(n, x_hat)
+
     H = np.eye(4)
+    H[:3, 0] = x_hat
+    H[:3, 1] = y_hat
+    H[:3, 2] = n
+    H[:3, 3] = o
     return H
 
 
@@ -68,7 +85,10 @@ def paper_to_robot(H, points):
     points = np.asarray(points, dtype=float)
 
     # TODO: transform the points.
-    return np.zeros_like(points)
+    points = np.asarray(points, dtype=float)
+    R, o = H[:3, :3], H[:3, 3]
+
+    return points @ R.T + o
 
 
 def robot_to_paper(H, points):
@@ -87,4 +107,6 @@ def robot_to_paper(H, points):
     points = np.asarray(points, dtype=float)
 
     # TODO: transform the points.
-    return np.zeros_like(points)
+    R, o = H[:3, :3], H[:3, 3]
+
+    return (points - o) @ R
